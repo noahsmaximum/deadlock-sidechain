@@ -81,7 +81,7 @@ sidechain [--sim] [--demo] [--hidden] [--headless] [--quiet] [--config FILE]
 sidechain selftest       prove capture + per-app routing on this machine (silent, doesn't touch Spotify)
 sidechain devices        list outputs; mark default and sink
 sidechain restore        point Spotify back at the default output
-sidechain scan <log>     what the hook reported in a saved console.log (needs -condebug)
+sidechain scan <log> [--late]   replay a saved console.log on its timestamps: events, energy + stems over time
 sidechain render <in.wav> <out.wav> <script> [--trace t.csv]   offline timeline render
 ```
 

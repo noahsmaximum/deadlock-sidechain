@@ -55,6 +55,7 @@ enabled = true
 #   attack_ms / release_ms shape how fast a signal rises / falls. enabled = false mutes one.
 [signals]
 energy        = { attack_ms = 250, release_ms = 2500 }                    # derived, see [energy]
+max_energy    = { attack_ms = 0,   release_ms = 1500, strength = 1.0 }    # energy just crossed 90%
 fire          = { attack_ms = 0,   release_ms = 180,  strength = 1.0 }    # per bullet (ammo counter)
 hit           = { attack_ms = 0,   release_ms = 150,  strength = 1.0 }    # hit marker on an enemy
 crit          = { attack_ms = 0,   release_ms = 300,  strength = 1.0 }    # headshot / crit marker
@@ -75,14 +76,14 @@ midboss       = { attack_ms = 300, release_ms = 9000, strength = 1.0 }
 # levels
 dead          = { attack_ms = 400, release_ms = 1500 }
 low_health    = { attack_ms = 300, release_ms = 1000, threshold = 0.35 }  # 0 above 35% hp -> 1 at 0 hp
-# movespeed readout (HUD units): idle 0, walk ~362, sprint ~579, dash peaks ~700
-speed         = { attack_ms = 150, release_ms = 600,  min = 100.0, max = 700.0 }
+# movespeed readout (HUD units): idle 0, walk ~362, sprint ~579, dash peaks ~700 — walking barely counts
+speed         = { attack_ms = 150, release_ms = 600,  min = 300.0, max = 700.0 }
 shop          = { attack_ms = 200, release_ms = 300 }
 scoreboard    = { attack_ms = 150, release_ms = 300 }
 combat        = { attack_ms = 500, release_ms = 3000 }
 
 # ---------------------------------------------------------------------------------------------
-# ENERGY = clamp(sum of weight x signal, 0..1). Standing still = 0; walking ~0.2; sprinting ~0.4;
+# ENERGY = clamp(sum of weight x signal, 0..1). Standing / walking ~0; sprinting ~0.35; dashing 0.5;
 # a fight with shooting and hits pushes it to 1. Negative weights pull it down (dead).
 [energy.weights]
 speed         = 0.5
@@ -112,6 +113,10 @@ routes = [
   { signal = "energy",         param = "bass_db",      amount = 10.0 },
   { signal = "energy",         param = "highpass_oct", amount = -1.5 },
   { signal = "energy",         param = "treble_db",    amount = 2.5 },
+  # hitting max energy: a quick lift so you can hear you got there
+  { signal = "max_energy",     param = "treble_db",    amount = 4.0 },
+  { signal = "max_energy",     param = "width",        amount = 0.4 },
+  { signal = "max_energy",     param = "drive",        amount = 0.15 },
   # stems: vocals come in through the middle of the energy range, drums only near the top
   # (from / to = the slice of the signal over which a route ramps from nothing to full)
   { signal = "energy",         param = "vocals_db",    amount = 30.0, from = 0.15, to = 0.55 },

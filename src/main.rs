@@ -41,7 +41,7 @@ usage:
   sidechain devices                             list output devices
   sidechain selftest                            check capture + routing on this machine (silent)
   sidechain restore                             point Spotify back at its normal output
-  sidechain scan <console.log>                  show what the hook reported in a saved log
+  sidechain scan <console.log> [--late]         replay a saved log: events, energy + stems over time
   sidechain render <in.wav> <out.wav> <script>  offline: run a scripted event timeline over a file
 
 keys while running (console focused):
@@ -162,7 +162,7 @@ fn real_main() -> Result<()> {
             println!("{}", if ok { format!("restored: {app} follows the default output again") } else { format!("{app} isn't running with an audio session — start playback and run again") });
             Ok(())
         }
-        Some("scan") => scan(pos.get(1).copied().ok_or_else(|| anyhow!("scan <console.log>"))?, load()?.1),
+        Some("scan") => scan(pos.get(1).copied().ok_or_else(|| anyhow!("scan <console.log>"))?, load()?.1, flag("--late")),
         Some("render") => {
             if pos.len() < 4 {
                 bail!("render <in.wav> <out.wav> <script>");
@@ -213,32 +213,128 @@ fn run(cfg_path: std::path::PathBuf, cfg: Config, opts: engine::Opts, headless: 
     engine.join().map_err(|_| anyhow!("engine thread panicked"))?
 }
 
-/// Replay a saved console.log through the parser/control and print what it would have done.
-fn scan(path: &str, cfg: Config) -> Result<()> {
+/// `MM/DD HH:MM:SS` at the start of a console.log line -> seconds since the start of the year-ish
+/// (only differences matter).
+fn line_secs(line: &str) -> Option<f64> {
+    let b = line.as_bytes();
+    if b.len() < 14 || b[2] != b'/' || b[5] != b' ' || b[8] != b':' || b[11] != b':' {
+        return None;
+    }
+    let n = |r: std::ops::Range<usize>| line.get(r)?.parse::<f64>().ok();
+    Some(((n(0..2)? * 31.0 + n(3..5)?) * 24.0 + n(6..8)?) * 3600.0 + n(9..11)? * 60.0 + n(12..14)?)
+}
+
+/// Replay a saved console.log through the parser/control on its real timestamps and report what
+/// the engine would have done — events, energy and stems over time. `late` drops the hook's
+/// `live` flag (= an engine started mid-match, the case that used to leave energy at 0).
+fn scan(path: &str, cfg: Config, late: bool) -> Result<()> {
     let text = std::fs::read(path).with_context(|| path.to_string())?;
     let text = String::from_utf8_lossy(&text);
-    let mut ctl = Control::new(cfg);
+    // (seconds, line) for our lines; spread the lines of one second evenly across it
+    let mut rows: Vec<(f64, game::HookLine)> = Vec::new();
     let mut dedupe = Dedupe::default();
-    let (mut lines, mut kept) = (0, 0);
-    let mut spd = (f32::MAX, f32::MIN);
+    let mut lines_seen = 0;
     for line in text.lines() {
-        let Some(l) = game::parse_line(line) else { continue };
-        lines += 1;
+        let Some(mut l) = game::parse_line(line) else { continue };
+        lines_seen += 1;
         if !dedupe.accept(&l) {
             continue;
         }
-        kept += 1;
-        if let Some(s) = l.spd {
-            spd = (spd.0.min(s), spd.1.max(s));
+        if late {
+            l.live = None;
         }
-        ctl.hook(&l);
-        ctl.tick(0.033);
+        if let Some(t) = line_secs(line) {
+            rows.push((t, l));
+        }
     }
-    println!("\n{lines} hook lines ({kept} after dedupe)");
-    if spd.0 <= spd.1 {
-        println!("speed readout range: {:.1} .. {:.1}", spd.0, spd.1);
+    let mut i = 0;
+    while i < rows.len() {
+        let t0 = rows[i].0;
+        let j = rows[i..].iter().position(|r| r.0 != t0).map_or(rows.len(), |k| i + k);
+        let n = (j - i) as f64;
+        for (k, r) in rows[i..j].iter_mut().enumerate() {
+            r.0 = t0 + k as f64 / n;
+        }
+        i = j;
     }
-    println!("signal pulses:");
+    let Some(first) = rows.first().map(|r| r.0) else {
+        println!("no [SIDECHAIN] lines in {path}");
+        return Ok(());
+    };
+
+    let mut ctl = Control::new(cfg);
+    ctl.log_events = false;
+    let step = 1.0 / 60.0;
+    let (mut t, mut ri) = (first, 0);
+    let end = rows.last().map(|r| r.0).unwrap_or(first) + 5.0;
+    let (mut in_match, mut e_sum, mut e_max) = (0.0f64, 0.0f64, 0.0f32);
+    let (mut e_half, mut e_full, mut vox_in, mut drums_in) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
+    let mut hist = [0.0f64; 10];
+    // per-minute: (match secs, energy sum, energy max, vocals-in secs, drums-in secs)
+    let mut minutes: std::collections::BTreeMap<i64, (f64, f64, f32, f64, f64)> = Default::default();
+    while t < end {
+        while ri < rows.len() && rows[ri].0 <= t {
+            ctl.hook(&rows[ri].1);
+            ri += 1;
+        }
+        ctl.tick(step as f32);
+        if ctl.in_match() {
+            let e = ctl.signal("energy");
+            let tv = ctl.targets();
+            let vox = tv[config::Param::VocalsDb.index()] > -6.0;
+            let drums = tv[config::Param::DrumsDb.index()] > -6.0;
+            in_match += step;
+            e_sum += e as f64 * step;
+            e_max = e_max.max(e);
+            hist[((e * 10.0) as usize).min(9)] += step;
+            if e >= 0.5 {
+                e_half += step;
+            }
+            if e >= 0.9 {
+                e_full += step;
+            }
+            if vox {
+                vox_in += step;
+            }
+            if drums {
+                drums_in += step;
+            }
+            let m = minutes.entry(((t - first) / 60.0) as i64).or_default();
+            m.0 += step;
+            m.1 += e as f64 * step;
+            m.2 = m.2.max(e);
+            if vox {
+                m.3 += step;
+            }
+            if drums {
+                m.4 += step;
+            }
+        }
+        t += step;
+    }
+
+    println!("\n{lines_seen} hook lines, {} after dedupe, {:.0} min of log{}", rows.len(), (end - first) / 60.0, if late { "  [--late: hook's live flag ignored]" } else { "" });
+    println!("in a match: {:.1} min", in_match / 60.0);
+    if in_match > 0.0 {
+        println!(
+            "energy: mean {:.2}, max {:.2}, >=0.5 for {:.0}% of the match, >=0.9 for {:.0}%",
+            e_sum / in_match,
+            e_max,
+            100.0 * e_half / in_match,
+            100.0 * e_full / in_match
+        );
+        let bars: String = hist.iter().map(|h| [' ', '.', ':', '-', '=', '#'][((h / in_match) * 25.0).min(5.0) as usize]).collect();
+        println!("energy histogram 0.0 [{bars}] 1.0");
+        println!("stems: vocals in (> -6 dB) {:.0}% of the match, drums in {:.0}%", 100.0 * vox_in / in_match, 100.0 * drums_in / in_match);
+        println!("\n min | energy avg  max | vocals in | drums in");
+        for (m, (secs, es, emax, v, d)) in &minutes {
+            if *secs < 5.0 {
+                continue;
+            }
+            println!(" {m:>3} |      {:.2}  {:.2} |      {:>3.0}% |     {:>3.0}%", es / secs, emax, 100.0 * v / secs, 100.0 * d / secs);
+        }
+    }
+    println!("\nsignal pulses:");
     for (k, v) in &ctl.counts {
         println!("  {k:<16} {v}");
     }

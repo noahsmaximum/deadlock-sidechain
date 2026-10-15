@@ -660,7 +660,8 @@ impl App {
 
         card(ui, "Energy", |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new(format!("{:>3.0}%", energy * 100.0)).size(28.0).strong().color(lerp_color(CALM, ACCENT, energy)));
+                let txt = if energy >= 0.9 { "MAX".to_string() } else { format!("{:>3.0}%", energy * 100.0) };
+                ui.label(RichText::new(txt).size(28.0).strong().color(lerp_color(CALM, ACCENT, energy)));
                 ui.vertical(|ui| {
                     ui.add_space(6.0);
                     let w = ui.available_width();
