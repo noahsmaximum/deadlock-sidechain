@@ -163,7 +163,7 @@ pub fn run(hub: Arc<Hub>, rx: Receiver<Cmd>, cfg: Config, opts: Opts) -> Result<
     log(format!("config: {}", hub.cfg_path.display()));
 
     let (mut router, mut router_err) = make_router(&cfg, &sh);
-    sh.stems_enabled.store(cfg.stems.enabled, Ordering::Relaxed);
+    set_stems(&sh, &cfg, &hub.cfg_path);
 
     let (tx, lines) = std::sync::mpsc::channel::<String>();
     let inputs = Arc::new(InputStatus::default());
@@ -358,6 +358,13 @@ pub fn run(hub: Arc<Hub>, rx: Receiver<Cmd>, cfg: Config, opts: Opts) -> Result<
             s.cfg_gen = hub.active.lock().unwrap().0;
             s.demo = demo.as_ref().map(Demo::elapsed);
             s.stems = sh.stems_enabled.load(Ordering::Relaxed);
+            s.stems_neural = sh.stems_neural.load(Ordering::Relaxed);
+            s.stems_latency_ms = sh.stems_latency_ms.load(Ordering::Relaxed);
+            s.neural_ready = sh.neural.ready.load(Ordering::Relaxed);
+            s.neural_ms = sh.neural.infer_ms.load(Ordering::Relaxed);
+            s.neural_misses = sh.neural.misses.load(Ordering::Relaxed);
+            s.neural_device = sh.neural.device.lock().unwrap().clone();
+            s.neural_error = sh.neural.error.lock().unwrap().clone();
             s.stem_levels = [0, 1, 2].map(|i| f32::from_bits(sh.stem_levels[i].load(Ordering::Relaxed)));
         }
 
@@ -385,13 +392,31 @@ pub fn run(hub: Arc<Hub>, rx: Receiver<Cmd>, cfg: Config, opts: Opts) -> Result<
     Ok(())
 }
 
+/// Hand the stems settings to the render thread (it rebuilds the stage when they change).
+fn set_stems(sh: &Shared, c: &Config, cfg_path: &Path) {
+    let neural = c.stems.mode == crate::config::StemMode::Neural;
+    let mut model = PathBuf::from(&c.stems.neural_model);
+    if model.is_relative() {
+        let beside_cfg = cfg_path.parent().map(|d| d.join(&model)).filter(|p| p.exists());
+        let beside_exe = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join(&model))).filter(|p| p.exists());
+        model = beside_cfg.or(beside_exe).unwrap_or(model);
+    }
+    if neural && !model.exists() {
+        log(format!("neural stems: model not found at {} — using DSP stems", model.display()));
+    }
+    *sh.neural_model.lock().unwrap() = model.clone();
+    sh.neural_hop_ms.store((c.stems.neural_hop_s.clamp(0.5, 5.0) * 1000.0) as u32, Ordering::Relaxed);
+    sh.stems_neural.store(neural && model.exists(), Ordering::Relaxed);
+    sh.stems_enabled.store(c.stems.enabled, Ordering::Relaxed);
+}
+
 fn apply_config(hub: &Hub, ctl: &mut Control, router: &mut Option<Router>, router_err: &mut String, sh: &Arc<Shared>, c: Config) {
     if let Err(e) = c.validate() {
         log(format!("config rejected: {e:#}"));
         return;
     }
     sh.latency_frames.store((c.audio.latency_ms.max(5.0) * audio::RATE as f32 / 1000.0) as u32, Ordering::Relaxed);
-    sh.stems_enabled.store(c.stems.enabled, Ordering::Relaxed);
+    set_stems(sh, &c, &hub.cfg_path);
     let audio_changed = c.audio.app != ctl.cfg.audio.app || c.audio.sink != ctl.cfg.audio.sink || c.audio.output != ctl.cfg.audio.output;
     if c.input != ctl.cfg.input {
         log("input settings change takes effect after a restart");

@@ -54,6 +54,13 @@ pub struct Snapshot {
     pub demo: Option<f32>,
     pub stems: bool,
     pub stem_levels: [f32; 3],
+    pub stems_neural: bool,
+    pub stems_latency_ms: u32,
+    pub neural_ready: bool,
+    pub neural_ms: u32,
+    pub neural_misses: u64,
+    pub neural_device: String,
+    pub neural_error: String,
 }
 
 impl Default for Snapshot {
@@ -90,6 +97,13 @@ impl Default for Snapshot {
             demo: None,
             stems: false,
             stem_levels: [-90.0; 3],
+            stems_neural: false,
+            stems_latency_ms: 0,
+            neural_ready: false,
+            neural_ms: 0,
+            neural_misses: 0,
+            neural_device: String::new(),
+            neural_error: String::new(),
         }
     }
 }

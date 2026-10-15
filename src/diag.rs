@@ -156,3 +156,32 @@ pub fn devices(sink: &str) -> Result<()> {
     }
     Ok(())
 }
+
+/// `sidechain capture <secs> <out.wav> [exe]` — record what Sidechain would hear from the app
+/// (process loopback at the engine rate). Handy for offline tuning with `render`.
+pub fn capture(secs: f64, out: &str, exe: &str) -> Result<()> {
+    wasapi::initialize_mta().ok()?;
+    let (root, _) = crate::sessions::find_tree(exe).ok_or_else(|| anyhow!("{exe} is not running"))?;
+    let mut client = AudioClient::new_application_loopback_client(root, true)?;
+    client.initialize_client(&fmt(), &Direction::Capture, &StreamMode::EventsShared { autoconvert: true, buffer_duration_hns: 0 })?;
+    let ev = client.set_get_eventhandle()?;
+    let cc = client.get_audiocaptureclient()?;
+    let mut q = VecDeque::new();
+    client.start_stream()?;
+    let end = Instant::now() + Duration::from_secs_f64(secs);
+    while Instant::now() < end {
+        if ev.wait_for_event(200).is_ok() {
+            while cc.get_next_packet_size()?.unwrap_or(0) > 0 {
+                cc.read_from_device_to_deque(&mut q)?;
+            }
+        }
+    }
+    client.stop_stream()?;
+    let (a, b) = q.as_slices();
+    let bytes: Vec<u8> = a.iter().chain(b).copied().collect();
+    let s: Vec<f32> = bytes.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+    let rms = (s.iter().map(|x| x * x).sum::<f32>() / s.len().max(1) as f32).sqrt();
+    crate::wav::write(out, RATE as u32, 2, &s)?;
+    println!("wrote {out}: {:.1}s, RMS {:.3}{}", s.len() as f32 / 2.0 / RATE as f32, rms, if rms < 1e-4 { " (silent — is it playing?)" } else { "" });
+    Ok(())
+}
