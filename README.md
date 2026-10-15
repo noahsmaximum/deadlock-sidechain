@@ -63,7 +63,18 @@ Spotify ──(re-pointed to a silent sink)──> process loopback ──> EQ /
   playing. A cubic resampler with a PI loop absorbs the clock drift between the two devices, adding
   about 30 ms. The window shows where Spotify actually is (`Spotify → sink → Sidechain ✓`) and
   warns if it's still on the old device too.
-- **Stems.** These are real-time approximations on the CPU, not a neural model, so your GPU stays
+- **Neural stems (optional).** HT-Demucs v4 runs on the GPU through ONNX Runtime + DirectML,
+  using the MIT-licensed forward-only export
+  [webnn/stem-separator](https://huggingface.co/webnn/stem-separator). The spectrogram front and back
+  end is reimplemented in Rust; `sidechain neural-check` verifies it against the full-graph export
+  (51–80 dB SNR). Every *hop* (default 2 s) the last 7.8 s are separated, and the slice with 1 s of
+  future context is kept, crossfaded. The music therefore plays ~3.8 s behind Spotify: game
+  reactions stay instant, but pause and skip lag by that much (a pause fades the queued audio out
+  immediately). Costs ~0.45 s of GPU per separation, so ~24 % busy at a 2 s hop; adjustable on the
+  Energy tab. DirectML's graph fusion has to be off, because fused it miscomputes this model.
+  Setup: put `htdemucs_fwd.onnx` + `htdemucs_fwd.onnx.data` from that repo's `onnx/` folder into
+  `models/`.
+- **Stems (Fast).** These are real-time approximations on the CPU, not a neural model, so your GPU stays
   free for the game. An STFT (2048 / 512) splits each frame three ways. **Drums** are the
   percussive part of a causal harmonic/percussive split (a median over past frames vs a median
   across frequency, soft masks). **Vocals** are the harmonic part that's centre-panned (L/R
@@ -81,6 +92,8 @@ sidechain [--sim] [--demo] [--hidden] [--headless] [--quiet] [--config FILE]
 sidechain selftest       prove capture + per-app routing on this machine (silent, doesn't touch Spotify)
 sidechain devices        list outputs; mark default and sink
 sidechain restore        point Spotify back at the default output
+sidechain capture <secs> <out.wav>   record what Sidechain hears from Spotify (for offline tuning)
+sidechain neural-check   verify the neural front/back end against the full-graph HT-Demucs export
 sidechain scan <log> [--late]   replay a saved console.log on its timestamps: events, energy + stems over time
 sidechain render <in.wav> <out.wav> <script> [--trace t.csv]   offline timeline render
 ```
@@ -101,7 +114,8 @@ Console keys (console focused): `b` bypass · `w` open window · `v` status line
 | Settings window (all tabs), demo, presets | **verified** by screenshot / offline; tray click-through **untested** |
 | DSP + energy + route matrix | **verified** offline (`tools/offline_check.py`) |
 | Stems: exact pass-through; separation on synthetic parts; energy arc (calm −28/−30 dB → sprint vocals in → fight all in) | **verified** (unit tests + `tools/stems_check.py`) |
-| Stems on real music | **untested.** Expect bleed; tune the calm levels / ranges on the Energy tab |
+| Stems on real music | Fast: bleed as expected. Neural: clean, and solos sum back to the mix (+0.2 dB) on a real clip; A/B files in `ab/` |
+| Neural stems: GPU, bit-exact passthrough at unity, live load + separation timing | **verified** (offline + headless live run); not yet in a real match |
 
 ## Troubleshooting
 

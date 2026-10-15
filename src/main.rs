@@ -13,6 +13,7 @@ mod engine;
 mod game;
 mod gui;
 mod hub;
+mod neural;
 mod presets;
 mod routing;
 mod sessions;
@@ -152,6 +153,16 @@ fn real_main() -> Result<()> {
             }
             Ok(())
         }
+        Some("capture") => diag::capture(
+            pos.get(1).ok_or_else(|| anyhow!("capture <secs> <out.wav> [exe]"))?.parse()?,
+            pos.get(2).copied().unwrap_or("capture.wav"),
+            pos.get(3).copied().unwrap_or("Spotify.exe"),
+        ),
+        Some("neural-sum") => neural::check_sum(std::path::Path::new("models/htdemucs_fwd.onnx"), pos[1]),
+        Some("neural-check") => neural::check(
+            std::path::Path::new(pos.get(1).copied().unwrap_or("models/htdemucs_fp16weights.onnx")),
+            std::path::Path::new(pos.get(2).copied().unwrap_or("models/htdemucs_fwd.onnx")),
+        ),
         Some("devices") => diag::devices(&load().map(|c| c.1.audio.sink).unwrap_or_default()),
         Some("selftest") => diag::selftest(&load()?.1.audio.sink),
         Some("restore") => {
@@ -363,7 +374,21 @@ fn render_offline(input: &str, output: &str, script: &str, cfg: Config, trace: O
     ctl.live = true;
     ctl.log_events = false;
     let mut chain = dsp::Chain::new(w.rate as f32);
-    let mut stems = ctl.cfg.stems.enabled.then(|| stems::Stems::new(w.rate as f32));
+    enum Off {
+        Dsp(stems::Stems),
+        Neural(neural::NeuralStems),
+    }
+    let mut stems = if !ctl.cfg.stems.enabled {
+        None
+    } else if ctl.cfg.stems.mode == config::StemMode::Neural {
+        if w.rate as usize != neural::SR {
+            bail!("neural stems need a {} Hz file", neural::SR);
+        }
+        let status = std::sync::Arc::new(neural::NeuralStatus::default());
+        Some(Off::Neural(neural::NeuralStems::new(std::path::Path::new(&ctl.cfg.stems.neural_model), ctl.cfg.stems.neural_hop_s, true, status)))
+    } else {
+        Some(Off::Dsp(stems::Stems::new(w.rate as f32)))
+    };
     let mut out = w.samples.clone();
     let block = (w.rate as usize / 200).max(1); // 5 ms control rate
     let mut csv = String::from("t");
@@ -388,8 +413,11 @@ fn render_offline(input: &str, output: &str, script: &str, cfg: Config, trace: O
         }
         ctl.tick(block as f32 / w.rate as f32);
         let tv = ctl.targets();
-        if let Some(st) = stems.as_mut() {
-            st.process(chunk, config::STEM_PARAMS.map(|p| tv[p.index()]));
+        let db = config::STEM_PARAMS.map(|p| tv[p.index()]);
+        match stems.as_mut() {
+            Some(Off::Dsp(s)) => s.process(chunk, db),
+            Some(Off::Neural(n)) => n.process(chunk, db),
+            None => {}
         }
         chain.process(chunk, &tv);
         if bi % 10 == 0 {

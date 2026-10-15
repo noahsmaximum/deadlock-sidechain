@@ -897,7 +897,7 @@ impl App {
             self.test_button(ui, "energy", "Test full");
         });
         ui.add_space(8.0);
-        self.stems_card(ui);
+        self.stems_card(ui, snap);
         ui.add_space(8.0);
         ui.columns(2, |cols| {
             card(&mut cols[0], "Calm state (nothing happening)", |ui| {
@@ -981,14 +981,50 @@ impl App {
     }
 
     /// Each stem: a calm level, and the slice of energy over which it comes back to 0 dB.
-    fn stems_card(&mut self, ui: &mut Ui) {
+    fn stems_card(&mut self, ui: &mut Ui, snap: &Snapshot) {
         card(ui, "Stems", |ui| {
-            ui.horizontal(|ui| {
-                ui.checkbox(&mut self.draft.stems.enabled, RichText::new("Split the track into drums / vocals / music").strong());
-                ui.label(RichText::new("real-time approximation on the CPU, adds ~43 ms").size(11.0).color(DIM));
-            });
+            ui.checkbox(&mut self.draft.stems.enabled, RichText::new("Split the track into drums / vocals / music").strong());
             if !self.draft.stems.enabled {
                 return;
+            }
+            use crate::config::StemMode;
+            ui.horizontal(|ui| {
+                ui.radio_value(&mut self.draft.stems.mode, StemMode::Dsp, "Fast")
+                    .on_hover_text("Real-time DSP approximation on the CPU. ~43 ms, no GPU. Rough: bleed between stems.");
+                ui.label(RichText::new("CPU, ~43 ms delay, rough").size(11.0).color(DIM));
+                ui.add_space(16.0);
+                ui.radio_value(&mut self.draft.stems.mode, StemMode::Neural, "Neural (HT-Demucs)")
+                    .on_hover_text("Real stem separation on the GPU (DirectML). Clean stems, but the music plays a few seconds behind Spotify (pause/skip lag by that much).");
+                ui.label(RichText::new("GPU, clean, seconds of delay").size(11.0).color(DIM));
+            });
+            if self.draft.stems.mode == StemMode::Neural {
+                ui.horizontal(|ui| {
+                    ui.label("Separate every");
+                    ui.add(egui::Slider::new(&mut self.draft.stems.neural_hop_s, 1.0..=4.0).suffix(" s").fixed_decimals(1));
+                    let hop = self.draft.stems.neural_hop_s;
+                    let ms = if snap.neural_ms > 0 { snap.neural_ms as f32 } else { 430.0 };
+                    ui.label(
+                        RichText::new(format!(
+                            "music delay ~{:.1} s · GPU busy ~{:.0}% of the time",
+                            crate::neural::NeuralStems::latency_s(hop),
+                            100.0 * ms / 1000.0 / hop
+                        ))
+                        .size(11.0)
+                        .color(DIM),
+                    );
+                });
+                if snap.stems_neural {
+                    let (ok, txt) = if !snap.neural_error.is_empty() {
+                        (Some(false), format!("error: {}", snap.neural_error))
+                    } else if snap.neural_ready {
+                        (Some(true), format!("running on {} · {} ms per separation · {} late samples", snap.neural_device, snap.neural_ms, snap.neural_misses))
+                    } else {
+                        (None, "loading model…".to_string())
+                    };
+                    ui.horizontal(|ui| pill(ui, ok, &txt));
+                } else if snap.stems {
+                    ui.colored_label(BAD, format!("model not found ({}) — using Fast", self.draft.stems.neural_model));
+                }
             }
             ui.add_space(4.0);
             egui::Grid::new("stems").num_columns(4).spacing([14.0, 8.0]).show(ui, |ui| {

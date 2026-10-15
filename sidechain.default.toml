@@ -49,6 +49,9 @@ vocals_db = -30.0
 # part in the vocal band, music = the rest. Calm keeps drums + vocals out; energy brings them in.
 [stems]
 enabled = true
+mode = "dsp"                         # "dsp" = fast CPU approximation (~43 ms) | "neural" = HT-Demucs on the GPU
+neural_hop_s = 2.0                   # neural: separate every N s (music delay ~ N + 1.85 s, GPU busy ~0.43/N)
+neural_model = "models/htdemucs_fwd.onnx"
 
 # ---------------------------------------------------------------------------------------------
 # SIGNALS. Pulses (events) jump by `strength` (scaled where noted) and decay; levels follow a state.

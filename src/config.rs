@@ -140,11 +140,41 @@ pub struct Config {
 
 /// Approximate real-time stems (drums / vocals / music). Their gains are the drums_db /
 /// vocals_db / music_db params, so the calm state and routes drive them like anything else.
-#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct StemsCfg {
     #[serde(default)]
     pub enabled: bool,
+    /// "dsp" = real-time CPU approximation (~43 ms); "neural" = HT-Demucs on the GPU (seconds of delay).
+    #[serde(default)]
+    pub mode: StemMode,
+    /// Neural: seconds between separations. Smaller = less delay, more GPU.
+    #[serde(default = "default_hop")]
+    pub neural_hop_s: f32,
+    /// Neural: forward-only HT-Demucs ONNX (relative paths are from the config file's folder).
+    #[serde(default = "default_model")]
+    pub neural_model: String,
+}
+
+impl Default for StemsCfg {
+    fn default() -> Self {
+        StemsCfg { enabled: false, mode: StemMode::Dsp, neural_hop_s: default_hop(), neural_model: default_model() }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StemMode {
+    #[default]
+    Dsp,
+    Neural,
+}
+
+fn default_hop() -> f32 {
+    2.0
+}
+fn default_model() -> String {
+    "models/htdemucs_fwd.onnx".into()
 }
 
 /// `energy` = clamp(sum of weight x signal) — how much is going on. Its envelope lives in

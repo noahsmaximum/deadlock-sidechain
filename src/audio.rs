@@ -12,9 +12,32 @@ use wasapi::{AudioClient, DeviceEnumerator, Direction, SampleType, StreamMode, W
 
 use crate::config::{PARAMS, ParamValues, STEM_PARAMS};
 use crate::dsp::Chain;
+use crate::neural::NeuralStems;
 use crate::stems::Stems;
 
-pub const RATE: usize = 48_000;
+/// The stems stage: fast DSP approximation or neural (HT-Demucs) separation.
+pub enum StemProc {
+    Dsp(Stems),
+    Neural(NeuralStems, u32),
+}
+
+impl StemProc {
+    fn process(&mut self, buf: &mut [f32], db: [f32; 3]) {
+        match self {
+            StemProc::Dsp(s) => s.process(buf, db),
+            StemProc::Neural(n, _) => n.process(buf, db),
+        }
+    }
+    fn levels(&self) -> [f32; 3] {
+        match self {
+            StemProc::Dsp(s) => s.levels_db,
+            StemProc::Neural(n, _) => n.levels_db,
+        }
+    }
+}
+
+/// Engine rate. 44.1 kHz = Spotify's source rate and HT-Demucs' rate; Windows converts at the devices.
+pub const RATE: usize = 44_100;
 const MAX_QUEUE_FRAMES: usize = RATE; // 1 s; anything beyond is dropped as stale
 
 pub struct Shared {
@@ -35,6 +58,12 @@ pub struct Shared {
     pub capturing: AtomicBool,
     pub output_name: Mutex<String>,
     pub stems_enabled: AtomicBool,
+    pub stems_neural: AtomicBool,
+    pub neural_hop_ms: AtomicU32,
+    pub neural_model: Mutex<std::path::PathBuf>,
+    pub neural: Arc<crate::neural::NeuralStatus>,
+    /// Current added latency of the stems stage, ms.
+    pub stems_latency_ms: AtomicU32,
     /// Stem activity in dB (f32 bits): drums, vocals, music.
     pub stem_levels: [AtomicU32; 3],
 }
@@ -59,6 +88,11 @@ impl Shared {
             capturing: AtomicBool::new(false),
             output_name: Mutex::new(String::new()),
             stems_enabled: AtomicBool::new(false),
+            stems_neural: AtomicBool::new(false),
+            neural_hop_ms: AtomicU32::new(2000),
+            neural_model: Mutex::new(std::path::PathBuf::new()),
+            neural: Arc::new(crate::neural::NeuralStatus::default()),
+            stems_latency_ms: AtomicU32::new(0),
             stem_levels: [AtomicU32::new(0), AtomicU32::new(0), AtomicU32::new(0)],
         })
     }
@@ -231,7 +265,7 @@ pub fn spawn_render(sh: Arc<Shared>) {
             let _ = wasapi::initialize_mta();
             let mut chain = Chain::new(RATE as f32);
             let mut rs = Resampler::new();
-            let mut stems: Option<Stems> = None;
+            let mut stems: Option<StemProc> = None;
             while !sh.stop.load(Ordering::Relaxed) {
                 if let Err(e) = render(&sh, &mut chain, &mut rs, &mut stems) {
                     crate::log(format!("render: {e}"));
@@ -250,7 +284,7 @@ fn resolve_output(en: &DeviceEnumerator, id: &str) -> Result<wasapi::Device> {
     }
 }
 
-fn render(sh: &Shared, chain: &mut Chain, rs: &mut Resampler, stems: &mut Option<Stems>) -> Result<()> {
+fn render(sh: &Shared, chain: &mut Chain, rs: &mut Resampler, stems: &mut Option<StemProc>) -> Result<()> {
     let en = DeviceEnumerator::new()?;
     let want = sh.output_id.lock().unwrap().clone();
     let dev = resolve_output(&en, &want)?;
@@ -287,17 +321,37 @@ fn render(sh: &Shared, chain: &mut Chain, rs: &mut Resampler, stems: &mut Option
             targets = *t;
         }
         chain.bypass = sh.bypass.load(Ordering::Relaxed);
-        match (sh.stems_enabled.load(Ordering::Relaxed), stems.is_some()) {
-            (true, false) => *stems = Some(Stems::new(RATE as f32)),
-            (false, true) => *stems = None,
-            _ => {}
+        let want_neural = sh.stems_neural.load(Ordering::Relaxed);
+        let hop_ms = sh.neural_hop_ms.load(Ordering::Relaxed);
+        let rebuild = match (sh.stems_enabled.load(Ordering::Relaxed), stems.as_ref()) {
+            (false, Some(_)) => {
+                *stems = None;
+                sh.stems_latency_ms.store(0, Ordering::Relaxed);
+                false
+            }
+            (true, None) => true,
+            (true, Some(StemProc::Dsp(_))) => want_neural,
+            (true, Some(StemProc::Neural(_, h))) => !want_neural || *h != hop_ms,
+            (false, None) => false,
+        };
+        if rebuild {
+            if want_neural {
+                let model = sh.neural_model.lock().unwrap().clone();
+                let hop = hop_ms as f32 / 1000.0;
+                *stems = Some(StemProc::Neural(NeuralStems::new(&model, hop, false, sh.neural.clone()), hop_ms));
+                sh.stems_latency_ms.store((NeuralStems::latency_s(hop) * 1000.0) as u32, Ordering::Relaxed);
+            } else {
+                *stems = Some(StemProc::Dsp(Stems::new(RATE as f32)));
+                sh.stems_latency_ms.store((crate::stems::N as f32 / RATE as f32 * 1000.0) as u32, Ordering::Relaxed);
+            }
         }
         if let Some(st) = stems.as_mut() {
             // bypass keeps the stems in the path at unity so latency doesn't jump on A/B
             let db = if chain.bypass { [0.0; 3] } else { STEM_PARAMS.map(|p| targets[p.index()]) };
             st.process(&mut f32buf, db);
+            let lv = st.levels();
             for i in 0..3 {
-                sh.stem_levels[i].store(st.levels_db[i].to_bits(), Ordering::Relaxed);
+                sh.stem_levels[i].store(lv[i].to_bits(), Ordering::Relaxed);
             }
         }
         chain.process(&mut f32buf, &targets);
@@ -340,10 +394,10 @@ mod tests {
     fn resampler_tracks_drift() {
         let q = Mutex::new(VecDeque::new());
         let mut rs = Resampler::new();
-        let target = 1440.0; // 30 ms
+        let target = RATE as f64 * 0.030; // 30 ms
         let cap_rate = RATE as f64 * (1.0 + 150e-6);
         let (mut cap_t, mut cap_phase, mut cap_due) = (0.0f64, 0.0f64, 0.0f64);
-        let mut out = vec![0f32; 480 * 2];
+        let mut out = vec![0f32; RATE / 100 * 2]; // 10 ms periods
         let mut underruns = 0;
         let mut worst_jump = 0f32;
         let mut prev: Option<f32> = None;
@@ -381,7 +435,8 @@ mod tests {
         println!("ratio {ppm:+.1} ppm, queue {fill} frames, underruns {underruns}, worst step {worst_jump:.4}");
         assert_eq!(underruns, 0);
         assert!((ppm - 150.0).abs() < 40.0, "ratio didn't lock to drift: {ppm}");
-        // a 1 kHz sine at 0.5 amplitude moves at most 2*pi*1000/48000*0.5 = 0.065 per sample
-        assert!(worst_jump < 0.075, "discontinuity {worst_jump}");
+        // a 1 kHz sine at 0.5 amplitude moves at most 2*pi*1000/RATE*0.5 per sample
+        let max_step = 2.0 * std::f32::consts::PI * 1000.0 / RATE as f32 * 0.5;
+        assert!(worst_jump < max_step * 1.1, "discontinuity {worst_jump} (max {max_step})");
     }
 }
