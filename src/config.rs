@@ -4,12 +4,12 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_TOML: &str = include_str!("../sidechain.default.toml");
 
 /// DSP parameters the routes modulate, in route units (see sidechain.default.toml).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Param {
     GainDb,
@@ -52,12 +52,25 @@ impl Param {
             Param::Drive => "drive",
         }
     }
+    pub fn label(self) -> &'static str {
+        match self {
+            Param::GainDb => "Level (dB)",
+            Param::LowpassOct => "Low-pass (oct)",
+            Param::HighpassOct => "High-pass (oct)",
+            Param::Resonance => "Resonance",
+            Param::BassDb => "Bass (dB)",
+            Param::MidDb => "Mid (dB)",
+            Param::TrebleDb => "Treble (dB)",
+            Param::Width => "Width",
+            Param::Drive => "Drive",
+        }
+    }
     /// Value with no modulation.
     pub fn neutral(self) -> f32 {
         if self == Param::Width { 1.0 } else { 0.0 }
     }
-    pub fn clamp(self, v: f32) -> f32 {
-        let (lo, hi) = match self {
+    pub fn range(self) -> (f32, f32) {
+        match self {
             Param::GainDb => (-30.0, 9.0),
             Param::LowpassOct => (-7.0, 0.0),
             Param::HighpassOct => (0.0, 7.0),
@@ -65,27 +78,54 @@ impl Param {
             Param::BassDb | Param::MidDb | Param::TrebleDb => (-18.0, 12.0),
             Param::Width => (0.0, 2.0),
             Param::Drive => (0.0, 1.0),
-        };
+        }
+    }
+    /// Sensible slider range for a route amount on this param.
+    pub fn amount_range(self) -> (f32, f32) {
+        match self {
+            Param::GainDb => (-18.0, 9.0),
+            Param::LowpassOct => (-7.0, 0.0),
+            Param::HighpassOct => (0.0, 7.0),
+            Param::Resonance | Param::Drive => (0.0, 1.0),
+            Param::BassDb | Param::MidDb | Param::TrebleDb => (-18.0, 12.0),
+            Param::Width => (-1.0, 1.0),
+        }
+    }
+    pub fn clamp(self, v: f32) -> f32 {
+        let (lo, hi) = self.range();
         v.clamp(lo, hi)
     }
 }
 
 pub type ParamValues = [f32; PARAMS.len()];
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub audio: Audio,
     pub input: Input,
     #[serde(default)]
+    pub master: Master,
+    #[serde(default)]
     pub base: BTreeMap<Param, f32>,
     pub signals: BTreeMap<String, SignalCfg>,
+    #[serde(default)]
+    pub energy: Energy,
     pub mix: Mix,
     #[serde(default)]
     pub text: Text,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+/// `energy` = clamp(sum of weight x signal) — how much is going on. Its envelope lives in
+/// [signals.energy]; routes from it take the track from calm to full.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Energy {
+    #[serde(default)]
+    pub weights: BTreeMap<String, f32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Audio {
     pub app: String,
@@ -98,14 +138,14 @@ pub struct Audio {
     #[serde(default = "yes")]
     pub only_with_game: bool,
 }
-fn yes() -> bool {
-    true
-}
 fn default_latency() -> f32 {
     30.0
 }
+fn yes() -> bool {
+    true
+}
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Input {
     #[serde(default)]
@@ -114,9 +154,27 @@ pub struct Input {
     pub console_log: String,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Master {
+    /// Scales every route amount (1 = as written).
+    #[serde(default = "one")]
+    pub intensity: f32,
+    /// Constant output trim in dB.
+    #[serde(default)]
+    pub trim_db: f32,
+}
+impl Default for Master {
+    fn default() -> Self {
+        Master { intensity: 1.0, trim_db: 0.0 }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SignalCfg {
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub enabled: bool,
     #[serde(default)]
     pub attack_ms: f32,
     #[serde(default = "default_release")]
@@ -128,12 +186,12 @@ pub struct SignalCfg {
     #[serde(default = "one")]
     pub scale: f32,
     /// low_health: hp fraction where the level starts rising.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub threshold: Option<f32>,
     /// speed: readout mapped min..max -> 0..1.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min: Option<f32>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max: Option<f32>,
 }
 fn default_release() -> f32 {
@@ -142,14 +200,17 @@ fn default_release() -> f32 {
 fn one() -> f32 {
     1.0
 }
+fn is_true(b: &bool) -> bool {
+    *b
+}
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Mix {
     pub routes: Vec<Route>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Route {
     pub signal: String,
@@ -157,44 +218,102 @@ pub struct Route {
     pub amount: f32,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Text {
     #[serde(default)]
     pub rules: Vec<RuleCfg>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuleCfg {
     pub source: String,
     #[serde(rename = "match", default)]
     pub pattern: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub positive: Option<bool>,
     pub signal: String,
+}
+
+/// The musical half of a config — what a preset stores (devices/inputs stay per machine).
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub struct Sound {
+    #[serde(default)]
+    pub master: Master,
+    #[serde(default)]
+    pub base: BTreeMap<Param, f32>,
+    pub signals: BTreeMap<String, SignalCfg>,
+    #[serde(default)]
+    pub energy: Energy,
+    pub mix: Mix,
+    #[serde(default)]
+    pub text: Text,
 }
 
 impl Config {
     pub fn parse(src: &str) -> Result<Self> {
         let cfg: Config = toml::from_str(src)?;
-        for r in &cfg.mix.routes {
-            if !cfg.signals.contains_key(&r.signal) {
+        cfg.validate()?;
+        Ok(cfg)
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        for r in &self.mix.routes {
+            if !self.signals.contains_key(&r.signal) {
                 bail!("route uses unknown signal {:?} (define it under [signals])", r.signal);
             }
         }
-        for r in &cfg.text.rules {
-            if !cfg.signals.contains_key(&r.signal) {
+        for k in self.energy.weights.keys() {
+            if !self.signals.contains_key(k) {
+                bail!("energy weight for unknown signal {k:?}");
+            }
+        }
+        for r in &self.text.rules {
+            if !self.signals.contains_key(&r.signal) {
                 bail!("text rule uses unknown signal {:?}", r.signal);
             }
             regex::Regex::new(&r.pattern).with_context(|| format!("bad regex {:?}", r.pattern))?;
         }
-        Ok(cfg)
+        Ok(())
     }
 
     pub fn load(path: &Path) -> Result<Self> {
         let src = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
         Self::parse(src.trim_start_matches('\u{feff}')).with_context(|| format!("parse {}", path.display()))
+    }
+
+    pub fn save(&self, path: &Path) -> Result<()> {
+        let body = toml::to_string_pretty(self)?;
+        let text = format!(
+            "# Sidechain settings — written by the settings window. Hand edits hot-reload too.\n\
+             # Documented defaults: sidechain.default.toml\n\n{body}"
+        );
+        std::fs::write(path, text).with_context(|| format!("write {}", path.display()))
+    }
+
+    pub fn default_config() -> Self {
+        Self::parse(DEFAULT_TOML).expect("built-in default config")
+    }
+
+    pub fn sound(&self) -> Sound {
+        Sound {
+            master: self.master.clone(),
+            base: self.base.clone(),
+            signals: self.signals.clone(),
+            energy: self.energy.clone(),
+            mix: self.mix.clone(),
+            text: self.text.clone(),
+        }
+    }
+
+    pub fn set_sound(&mut self, s: Sound) {
+        self.master = s.master;
+        self.base = s.base;
+        self.signals = s.signals;
+        self.energy = s.energy;
+        self.mix = s.mix;
+        self.text = s.text;
     }
 
     pub fn base_values(&self) -> ParamValues {
@@ -204,7 +323,6 @@ impl Config {
         }
         v
     }
-
 }
 
 /// `--config <path>`, else ./sidechain.toml, else sidechain.toml beside the exe (written from
@@ -215,7 +333,7 @@ pub fn resolve_path(explicit: Option<&str>) -> Result<PathBuf> {
     }
     let local = PathBuf::from("sidechain.toml");
     if local.exists() {
-        return Ok(std::fs::canonicalize(&local).unwrap_or(local));
+        return Ok(std::path::absolute(&local).unwrap_or(local));
     }
     let dir = std::env::current_exe()?.parent().map(Path::to_path_buf).unwrap_or_default();
     let path = dir.join("sidechain.toml");
@@ -228,10 +346,20 @@ pub fn resolve_path(explicit: Option<&str>) -> Result<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn default_config_parses() {
-        let c = super::Config::parse(super::DEFAULT_TOML).expect("default config");
+        let c = Config::default_config();
         assert!(c.mix.routes.len() > 20);
         assert!(c.audio.only_with_game);
+    }
+
+    #[test]
+    fn save_roundtrips() {
+        let c = Config::default_config();
+        let text = toml::to_string_pretty(&c).unwrap();
+        let back = Config::parse(&text).unwrap();
+        assert_eq!(c, back);
     }
 }

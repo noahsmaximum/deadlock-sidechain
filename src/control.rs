@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use regex::Regex;
 
-use crate::config::{Config, PARAMS, ParamValues};
+use crate::config::{Config, PARAMS, Param, ParamValues};
 use crate::game::{HookEvent, HookLine};
 
 /// One signal's envelope. Levels follow `input` (exponential attack/release); pulses stack onto
@@ -44,6 +44,14 @@ pub struct Control {
     pub log_events: bool,
     /// pulses fired per signal (scan summary)
     pub counts: BTreeMap<String, u32>,
+    /// Level signals forced to 1 until the instant (settings-window "Test" on a level).
+    holds: BTreeMap<String, Instant>,
+    /// Last real value of event-driven levels (shop / scoreboard / combat).
+    facts: BTreeMap<String, f32>,
+    /// Lowest / highest non-zero speed readout seen (for calibrating speed min/max).
+    pub spd_range: Option<(f32, f32)>,
+    /// Most recent discrete events, newest last (settings-window feed).
+    pub recent: std::collections::VecDeque<(Instant, String)>,
 }
 
 impl Control {
@@ -64,6 +72,10 @@ impl Control {
             pending_ks: Vec::new(),
             log_events: true,
             counts: BTreeMap::new(),
+            holds: BTreeMap::new(),
+            facts: BTreeMap::new(),
+            spd_range: None,
+            recent: std::collections::VecDeque::new(),
         };
         c.apply_config();
         c
@@ -103,6 +115,12 @@ impl Control {
         let Some(sc) = self.cfg.signals.get(name) else { return };
         let add = amount * sc.strength;
         *self.counts.entry(name.to_string()).or_default() += 1;
+        if !matches!(name, "fire" | "hit" | "crit" | "ability" | "heal") {
+            self.recent.push_back((Instant::now(), name.to_string()));
+            if self.recent.len() > 40 {
+                self.recent.pop_front();
+            }
+        }
         if let Some(e) = self.envs.get_mut(name) {
             e.peak = (e.peak.max(e.value) + add).min(1.0);
         }
@@ -117,6 +135,10 @@ impl Control {
 
     pub fn signal(&self, name: &str) -> f32 {
         self.envs.get(name).map_or(0.0, |e| e.value)
+    }
+
+    pub fn all_signals(&self) -> Vec<(String, f32)> {
+        self.envs.iter().map(|(k, e)| (k.clone(), e.value)).collect()
     }
 
     pub fn active_signals(&self, min: f32) -> Vec<(&str, f32)> {
@@ -140,6 +162,7 @@ impl Control {
                         e.input = 0.0;
                         e.peak = 0.0;
                     }
+                    self.facts.clear();
                 }
             }
         }
@@ -174,6 +197,12 @@ impl Control {
         }
         if let Some(s) = l.spd {
             self.spd = Some(s);
+            if s > 0.5 {
+                self.spd_range = Some(match self.spd_range {
+                    Some((lo, hi)) => (lo.min(s), hi.max(s)),
+                    None => (s, s),
+                });
+            }
         }
         if let Some(d) = l.dead {
             let d = d != 0;
@@ -190,7 +219,7 @@ impl Control {
         }
         for (key, v) in [("shop", l.shop), ("scoreboard", l.sb), ("combat", l.combat)] {
             if let Some(v) = v {
-                self.level(key, v as f32);
+                self.set_fact(key, v as f32);
             }
         }
         if let Some(mb) = &l.mb {
@@ -220,7 +249,7 @@ impl Control {
                 "ks" => self.pending_ks.push(now),
                 "hit" => self.pulse("hit", 1.0),
                 "crit" => self.pulse("crit", 1.0),
-                "dmgout" => self.pulse("dmgout", 1.0),
+                "dmgout" => self.pulse("damage_dealt", 1.0),
                 other => self.pulse(other, 1.0),
             },
             HookEvent::Ability { slot, name } => {
@@ -290,6 +319,26 @@ impl Control {
             _ => 0.0,
         };
         self.level("speed", sp);
+        // energy: how much is going on right now (previous tick's envelopes, energy itself excluded)
+        let e: f32 = self
+            .cfg
+            .energy
+            .weights
+            .iter()
+            .filter(|(k, _)| k.as_str() != "energy")
+            .map(|(k, w)| w * self.signal(k))
+            .sum();
+        self.level("energy", if self.live || self.holds.contains_key("energy") { e.clamp(0.0, 1.0) } else { 0.0 });
+        let facts: Vec<(String, f32)> = self.facts.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        for (k, v) in facts {
+            self.level(&k, v);
+        }
+        let now_h = Instant::now();
+        self.holds.retain(|_, until| *until > now_h);
+        let held: Vec<String> = self.holds.keys().cloned().collect();
+        for name in held {
+            self.level(&name, 1.0);
+        }
 
         for (name, e) in self.envs.iter_mut() {
             let Some(sc) = self.cfg.signals.get(name) else { continue };
@@ -315,11 +364,31 @@ impl Control {
         }
     }
 
+    pub fn set_fact(&mut self, name: &str, v: f32) {
+        self.facts.insert(name.to_string(), v);
+    }
+
+    /// Settings-window "Test": pulses fire once, levels are held at 1 for `secs`.
+    pub fn test(&mut self, name: &str, secs: f32) {
+        const LEVELS: [&str; 7] = ["dead", "low_health", "speed", "shop", "scoreboard", "combat", "energy"];
+        if LEVELS.contains(&name) {
+            self.holds.insert(name.to_string(), Instant::now() + std::time::Duration::from_secs_f32(secs));
+        } else {
+            let sc = self.cfg.signals.get(name).map_or(1.0, |s| s.strength.max(1e-3));
+            self.pulse(name, 1.0 / sc); // full-scale regardless of per-event strength
+        }
+    }
+
     pub fn targets(&self) -> ParamValues {
         let mut v = self.cfg.base_values();
+        let k = self.cfg.master.intensity;
         for r in &self.cfg.mix.routes {
-            v[r.param.index()] += r.amount * self.signal(&r.signal);
+            if self.cfg.signals.get(&r.signal).is_some_and(|s| !s.enabled) {
+                continue;
+            }
+            v[r.param.index()] += k * r.amount * self.signal(&r.signal);
         }
+        v[Param::GainDb.index()] += self.cfg.master.trim_db;
         for p in PARAMS {
             v[p.index()] = p.clamp(v[p.index()]);
         }

@@ -1,80 +1,75 @@
 # Sidechain
 
-Deadlock gameplay drives an EQ on your Spotify. Shots duck the low end like a sidechain
-compressor, getting hit muffles the track, dying drops it underwater, kills and objectives hit like
-a drop, and moving fast brightens and widens it. Works in normal matchmaking: client-side only, with no
-server plugin and no memory reading.
+Deadlock gameplay drives your Spotify. With nothing going on, the track sits back: near-mono,
+quieter, no bass. As more happens at once (moving fast, fighting, shooting, landing hits, kills),
+**energy** builds and the track opens up to full level, wide stereo, normal bass and a little extra
+air. On top of that, individual events have their own moves: shots pump the low end like a
+sidechain compressor, getting hit muffles the track, dying drops it underwater, kills and
+objectives hit like a drop.
+
+It works in normal matchmaking: client-side only, with no server plugin and no memory reading.
 
 ## Install
 
-1. **Engine:** `run.bat`. It builds on first run (needs Rust) and writes `sidechain.toml`.
-2. **Hook addon:** `.\build_addon.ps1` → add `dist\sidechain-hook.vpk` in **Deadlock Mod Manager**
-   as a local mod and enable it. It overrides `citadel_hud_top_bar`, so disable the old
-   `DEADLOCK_DEATH_HOOK` / Venator kill hook if it's enabled. Only one of them can load.
-3. **Steam → Deadlock → Launch options:** `-netconport 29000`. Add `-condebug` as well if you want
-   the console.log fallback.
-4. Start Spotify, run `run.bat`, play. Spotify is only taken over while `deadlock.exe` runs.
+1. **Engine + window:** `run.bat` (from cmd or Explorer; in PowerShell use `.\run.bat`). It
+   rebuilds if needed and opens the settings window. Closing the window hides it to the
+   **tray**. Right-click the tray icon → Quit to stop, which gives Spotify its output back.
+2. **Hook addon:** `.\build_addon.ps1`, then add `dist\sidechain-hook.vpk` in **Deadlock Mod
+   Manager** as a local mod. For later updates, close the game and run `.\build_addon.ps1 -Deploy`,
+   which overwrites the installed copy. The addon overrides `citadel_hud_top_bar`, so disable the
+   old `DEADLOCK_DEATH_HOOK` / Venator kill hook.
+3. **Steam → Deadlock → Launch options:** `-netconport 29000 -condebug`.
+4. Start Spotify and play. Spotify is only taken over while `deadlock.exe` runs.
 
-`Ctrl+C` / `q` stops it, and Spotify goes back to its normal output.
+To hear everything without the game, click **Play demo match** on the Live tab (or run
+`run.bat --demo`): a scripted 25 s fight with walking, sprinting, shooting, a kill, an ult, a death,
+a respawn and an objective.
+
+## The settings window
+
+| Tab | What's there |
+|---|---|
+| **Live** | energy meter; live EQ curve against the calm / full-energy curves; current level, width, filters; game facts (HP, ammo, speed, and the observed speed range with one-click calibration); recent events; active signal meters; test buttons for every event |
+| **Energy** | the core idea: the calm-state sliders, what "full energy" adds, rise/fall time, and the weight of each signal in energy (with live contribution bars) |
+| **Signals** | per-signal on/off, live meter, test, attack/release, strength, and damage scale / low-HP threshold / speed range |
+| **Routes** | the full modulation matrix (signal → parameter → amount), filterable |
+| **Text rules** | regex rules that map objective banners / announcement toasts to signals |
+| **Audio** | music app, silent sink, output device, latency, only-while-Deadlock-runs, game input settings, config folder, reset to defaults |
+| **Log** | everything the engine reports |
+
+The top bar has **Bypass** (A/B against the dry track), **Intensity** (scales every move),
+**Trim**, **Presets** (Default, Subtle, Cinematic, Club, Events only, plus your own via "Save as
+preset…") and **Save / Revert**. Every edit applies live; Save writes `sidechain.toml` (which also
+hot-reloads if you edit it by hand).
 
 ## How it works
 
 ```
-Deadlock HUD ── sidechain_hook.js (Panorama, polls ~30 Hz) ── $.Msg  [SIDECHAIN]{json}
-      └──> netconsole TCP :29000  (or console.log tail)  ──> sidechain.exe
-                                                                │ signals x routes
-Spotify ──(re-pointed to a silent sink)──> process loopback ──> EQ/filters ──> your output
+Deadlock HUD ── sidechain_hook.js (Panorama, ~30 Hz) ── $.Msg  [SIDECHAIN]{json}
+      └──> netconsole TCP :29000  /  console.log tail  ──> engine: signals → energy → routes
+Spotify ──(re-pointed to a silent sink)──> process loopback ──> EQ / filters / width ──> your output
 ```
 
-- **Game state.** Panorama has no data API and `$.AsyncWebRequest` is gone. The hook reads the
-  native HUD (ammo label, health labels, the movespeed readout it turns on, hit-marker classes,
-  damage-impact `killed`/`assist` classes, the kill-streak counter, objective banners, announcement
-  toasts, ability cooldowns, global `gShopOpen`/`gInCombat`) and prints changes to the console.
-  It reports facts only; all meaning and mapping lives in the engine, so tuning never needs a VPK rebuild.
-- **Audio.** Windows process loopback can't hear an app whose session is muted (it taps
-  after session volume/mute, which was measured). So sidechain moves Spotify to a device nobody
-  listens to (the per-app output override that Windows' volume mixer uses), captures it there by
-  process ID, and plays the processed copy on the device Spotify was using. A cubic resampler with
-  a PI loop absorbs the clock drift between the two devices (~30 ms added latency).
-- **Safety.** A detached guardian process waits on sidechain. If sidechain is killed, it restores
-  Spotify's output. If Spotify was closed by then, it waits for Spotify to start (the override
-  persists per app) and fixes it then.
-
-## What reacts (defaults)
-
-| Game | Music |
-|---|---|
-| Firing (ammo ticks) | low end −5 dB, level −2.5 dB per burst. Sprays stack into a full duck |
-| Hit / crit marker | treble sparkle +1.5 / +3 dB |
-| Taking damage | low-pass sweep down to ~1.8 kHz, scaled by % of max HP lost |
-| Low health (<35%) | progressive low-pass, narrower stereo |
-| Dead | underwater: low-pass ~600 Hz + resonance, −6 dB, near-mono |
-| Respawn | bright swell |
-| Movement speed | brighter + wider as you go faster |
-| Kill / assist | bass +4, treble +3, +1.5 dB, a little drive (assist: lighter) |
-| Ult (slot 4) | high-pass whoosh that falls back in |
-| Enemy objective down / ours lost | big smile EQ + width for 6 s / mid scoop + muffle |
-| Patron / Mid-Boss | the biggest lift (8–12 s) |
-| Shop open | "music in the next room" |
-
-## Tuning
-
-Everything is in `sidechain.toml`, and it hot-reloads on save:
-- `[signals]`: attack/release per signal, pulse strength, damage scale, low-health threshold,
-  speed range.
-- `[mix] routes`: `{ signal, param, amount }` rows. Params: `gain_db lowpass_oct highpass_oct
-  resonance bass_db mid_db treble_db width drive`.
-- `[text] rules`: regex on objective banners / toasts → signal.
-
-Audition without the game: `run.bat --sim`, then press `f` fire, `h` hit, `c` crit, `d`/`D` damage,
-`k` kill, `a` assist, `x` dead, `s` speed, `t` low HP, `u` ult, `o`/`l` objective, `m` midboss,
-`p` shop. In any mode, `b` toggles bypass for A/B comparison. The status line shows live signals and
-parameter offsets.
+- **Game state.** Panorama has no data API, and `$.AsyncWebRequest` is gone. The hook reads the
+  native HUD: the ammo label, the health labels (`.currentHealthLabel` / `.totalHealthLabel`), the
+  movespeed readout (it turns that on), hit-marker classes, the damage-impact `killed` / `assist`
+  classes, the kill-streak counter, objective banners, announcement toasts, ability cooldowns, and
+  the global `gShopOpen` / `gInCombat` flags. It prints changes to the console. It only reports
+  facts; all meaning lives in the engine, so tuning never needs a VPK rebuild.
+- **Audio.** Windows process loopback can't hear an app whose session is muted, so Sidechain
+  moves Spotify to a device nobody listens to (the per-app output override from Windows' volume
+  mixer) and captures it there by process. It then plays the processed copy where Spotify was
+  playing. A cubic resampler with a PI loop absorbs the clock drift between the two devices, adding
+  about 30 ms. The window shows where Spotify actually is (`Spotify → sink → Sidechain ✓`) and
+  warns if it's still on the old device too.
+- **Safety.** A detached guardian process waits on Sidechain. If Sidechain is killed, the
+  guardian restores Spotify's output. If Spotify was closed by then, it waits for Spotify to start
+  again (the override persists per app) and fixes it then.
 
 ## Commands
 
 ```
-sidechain [--sim] [--quiet] [--config FILE]   run
+sidechain [--sim] [--demo] [--hidden] [--headless] [--quiet] [--config FILE]
 sidechain selftest       prove capture + per-app routing on this machine (silent, doesn't touch Spotify)
 sidechain devices        list outputs; mark default and sink
 sidechain restore        point Spotify back at the default output
@@ -82,32 +77,29 @@ sidechain scan <log>     what the hook reported in a saved console.log (needs -c
 sidechain render <in.wav> <out.wav> <script> [--trace t.csv]   offline timeline render
 ```
 
-`python tools/offline_check.py <sidechain.exe> <workdir>` renders a scripted match over pink noise
-and prints per-window band/width/peak deltas.
+Console keys (console focused): `b` bypass · `w` open window · `v` status line · `q` quit.
+`--sim` adds fake gameplay keys (`f` fire, `k` kill, `x` dead, `s` speed, …).
 
 ## Status
 
 | Piece | State |
 |---|---|
-| Process loopback from the sink; muted-session behaviour | **verified** on this machine (selftest) |
-| Per-app override moves a running process; persists per app; restore | **verified** (stand-in app) |
-| Guardian restores after a hard kill / after the app relaunches | **verified** (stand-in app) |
-| Capture → resample → DSP → output, level-exact, 0 xruns | **verified** live (stand-in app, −74 dBFS tone) |
-| DSP + signal/route matrix | **verified** offline (`tools/offline_check.py`) |
-| Drift resampler | **unit-tested** (150 ppm, jittered bursts, no underruns/discontinuities) |
-| Hook addon compiles + packs | **verified** (VPK contents checked) |
-| Spotify itself following the override | **untested.** Spotify follows Windows default-device changes, so it should; first run will tell |
-| Hook reads in a live match (ammo, HP, speed, hits, impact classes, banners, toasts) | **untested.** Panel ids/classes come from the current game files; class edges for hit markers and banner visibility are best guesses |
-| netconsole carrying `$.Msg` lines | **untested.** `-condebug` log tail is the fallback, and both can run together (deduped) |
+| Capture from sink, per-app routing, restore, guardian (incl. hard kill) | **verified** (stand-in app) |
+| Real Spotify: routing + processed playback | **verified** by you (music played through it; the pause was the switch) |
+| Hook in a live match: ammo/fire, speed, hit/crit, combat, reload | **verified** from your log |
+| Hook health (`.currentHealthLabel`) → damage / low HP | **fixed in v0.1.1 of the VPK, untested.** v0.1.0 used ids that no longer exist |
+| Kill / assist / death / objectives / toasts in a real match | **untested** (none happened in your first session) |
+| netconsole carrying `$.Msg` | **untested**; console.log tail works |
+| Settings window (all tabs), demo, presets | **verified** by screenshot / offline; tray click-through **untested** |
+| DSP + energy + route matrix | **verified** offline (`tools/offline_check.py`) |
 
 ## Troubleshooting
 
 - **Spotify silent after a crash:** `sidechain restore`, or Windows Settings → System → Sound →
   Volume mixer → Spotify → output device → Default.
-- **Status says "no game":** the launch option is missing, or the hook isn't loaded. Check
-  `sidechain scan "<Deadlock>\game\citadel\console.log"` (with `-condebug`) for `hook ready`.
-- **"press play in Spotify":** Spotify has no audio session until it plays once, so there's nothing to route yet.
-- **No sink device:** any output you never listen to works (VB-Cable, an unused HDMI out). Set
-  `[audio] sink`.
-- **After a Deadlock patch:** re-decompile `panorama/layout/citadel_hud_top_bar.vxml_c` and re-apply
-  the one `<scripts>` include (see `build_addon.ps1`).
+- **"also still playing on …":** Spotify didn't follow the switch. Pause and play, or restart
+  Spotify.
+- **Hook pill red:** the launch options are missing, or the addon isn't enabled in Mod Manager.
+- **Effects too subtle / too much:** use the Intensity slider, or the Subtle / Club presets.
+- **After a Deadlock patch:** re-decompile `panorama/layout/citadel_hud_top_bar.vxml_c` and
+  re-apply the one `<scripts>` include (see `build_addon.ps1`).
