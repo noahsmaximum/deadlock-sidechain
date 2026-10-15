@@ -34,11 +34,21 @@ trim_db = 0.0
 #   treble_db     high shelf @ 6 kHz
 #   width         stereo width (1 = as is, 0 = mono, 2 = extra wide)
 #   drive         soft saturation 0..1
+#   drums_db      drums stem level   (needs [stems] enabled)
+#   vocals_db     vocals stem level
+#   music_db      everything-else stem level
 [base]
 gain_db = -6.0
 width = 0.25
 bass_db = -10.0
 highpass_oct = 1.5
+drums_db = -30.0
+vocals_db = -30.0
+
+# Real-time approximate stems (CPU, ~43 ms): drums = percussive part, vocals = centred harmonic
+# part in the vocal band, music = the rest. Calm keeps drums + vocals out; energy brings them in.
+[stems]
+enabled = true
 
 # ---------------------------------------------------------------------------------------------
 # SIGNALS. Pulses (events) jump by `strength` (scaled where noted) and decay; levels follow a state.
@@ -102,6 +112,10 @@ routes = [
   { signal = "energy",         param = "bass_db",      amount = 10.0 },
   { signal = "energy",         param = "highpass_oct", amount = -1.5 },
   { signal = "energy",         param = "treble_db",    amount = 2.5 },
+  # stems: vocals come in through the middle of the energy range, drums only near the top
+  # (from / to = the slice of the signal over which a route ramps from nothing to full)
+  { signal = "energy",         param = "vocals_db",    amount = 30.0, from = 0.15, to = 0.55 },
+  { signal = "energy",         param = "drums_db",     amount = 30.0, from = 0.55, to = 0.95 },
   # guns punch through: every shot pumps the low end + level like a sidechain compressor
   { signal = "fire",           param = "bass_db",      amount = -6.0 },
   { signal = "fire",           param = "gain_db",      amount = -3.0 },

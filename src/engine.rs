@@ -163,6 +163,7 @@ pub fn run(hub: Arc<Hub>, rx: Receiver<Cmd>, cfg: Config, opts: Opts) -> Result<
     log(format!("config: {}", hub.cfg_path.display()));
 
     let (mut router, mut router_err) = make_router(&cfg, &sh);
+    sh.stems_enabled.store(cfg.stems.enabled, Ordering::Relaxed);
 
     let (tx, lines) = std::sync::mpsc::channel::<String>();
     let inputs = Arc::new(InputStatus::default());
@@ -356,6 +357,8 @@ pub fn run(hub: Arc<Hub>, rx: Receiver<Cmd>, cfg: Config, opts: Opts) -> Result<
             s.recent = ctl.recent.iter().rev().map(|(t, n)| (now.duration_since(*t).as_secs_f32(), n.clone())).collect();
             s.cfg_gen = hub.active.lock().unwrap().0;
             s.demo = demo.as_ref().map(Demo::elapsed);
+            s.stems = sh.stems_enabled.load(Ordering::Relaxed);
+            s.stem_levels = [0, 1, 2].map(|i| f32::from_bits(sh.stem_levels[i].load(Ordering::Relaxed)));
         }
 
         // ---- console status line
@@ -388,6 +391,7 @@ fn apply_config(hub: &Hub, ctl: &mut Control, router: &mut Option<Router>, route
         return;
     }
     sh.latency_frames.store((c.audio.latency_ms.max(5.0) * audio::RATE as f32 / 1000.0) as u32, Ordering::Relaxed);
+    sh.stems_enabled.store(c.stems.enabled, Ordering::Relaxed);
     let audio_changed = c.audio.app != ctl.cfg.audio.app || c.audio.sink != ctl.cfg.audio.sink || c.audio.output != ctl.cfg.audio.output;
     if c.input != ctl.cfg.input {
         log("input settings change takes effect after a restart");

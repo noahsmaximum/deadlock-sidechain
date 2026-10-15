@@ -24,7 +24,7 @@ fn scale_routes(s: &mut Sound, signals: &[&str], k: f32) {
 fn set_route(s: &mut Sound, signal: &str, param: Param, amount: f32) {
     match s.mix.routes.iter_mut().find(|r| r.signal == signal && r.param == param) {
         Some(r) => r.amount = amount,
-        None => s.mix.routes.push(crate::config::Route { signal: signal.into(), param, amount }),
+        None => s.mix.routes.push(crate::config::Route::new(signal, param, amount)),
     }
 }
 

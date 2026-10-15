@@ -16,6 +16,7 @@ mod hub;
 mod presets;
 mod routing;
 mod sessions;
+mod stems;
 mod wav;
 
 use std::io::Write;
@@ -266,6 +267,7 @@ fn render_offline(input: &str, output: &str, script: &str, cfg: Config, trace: O
     ctl.live = true;
     ctl.log_events = false;
     let mut chain = dsp::Chain::new(w.rate as f32);
+    let mut stems = ctl.cfg.stems.enabled.then(|| stems::Stems::new(w.rate as f32));
     let mut out = w.samples.clone();
     let block = (w.rate as usize / 200).max(1); // 5 ms control rate
     let mut csv = String::from("t");
@@ -290,6 +292,9 @@ fn render_offline(input: &str, output: &str, script: &str, cfg: Config, trace: O
         }
         ctl.tick(block as f32 / w.rate as f32);
         let tv = ctl.targets();
+        if let Some(st) = stems.as_mut() {
+            st.process(chunk, config::STEM_PARAMS.map(|p| tv[p.index()]));
+        }
         chain.process(chunk, &tv);
         if bi % 10 == 0 {
             csv += &format!("{t:.3}");
