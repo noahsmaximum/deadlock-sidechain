@@ -1,7 +1,6 @@
 //! Game facts -> named signals (0..1 envelopes) -> DSP parameter targets via the route matrix.
 
 use std::collections::BTreeMap;
-use std::time::Instant;
 
 use regex::Regex;
 
@@ -38,20 +37,26 @@ pub struct Control {
     pub live: bool,
     // kill bookkeeping: impact "kill" is authoritative, kill-streak "ks" is a fallback that an
     // assist vetoes (the streak popup also pops for assists)
-    t_kill: Option<Instant>,
-    t_assist: Option<Instant>,
-    pending_ks: Vec<Instant>,
+    t_kill: Option<f64>,
+    t_assist: Option<f64>,
+    pending_ks: Vec<f64>,
     pub log_events: bool,
     /// pulses fired per signal (scan summary)
     pub counts: BTreeMap<String, u32>,
     /// Level signals forced to 1 until the instant (settings-window "Test" on a level).
-    holds: BTreeMap<String, Instant>,
+    holds: BTreeMap<String, f64>,
     /// Last real value of event-driven levels (shop / scoreboard / combat).
     facts: BTreeMap<String, f32>,
     /// Lowest / highest non-zero speed readout seen (for calibrating speed min/max).
     pub spd_range: Option<(f32, f32)>,
     /// Most recent discrete events, newest last (settings-window feed).
-    pub recent: std::collections::VecDeque<(Instant, String)>,
+    pub recent: std::collections::VecDeque<(f64, String)>,
+    /// Seconds of game time this controller has ticked (deterministic: replays use it too).
+    pub clock: f64,
+    /// `clock` when the hook last reported live gameplay facts (hp / ammo / speed / dead).
+    last_fact: f64,
+    /// `max_energy` fires when energy crosses 0.9 and re-arms once it falls below 0.6.
+    max_armed: bool,
 }
 
 impl Control {
@@ -76,6 +81,9 @@ impl Control {
             facts: BTreeMap::new(),
             spd_range: None,
             recent: std::collections::VecDeque::new(),
+            clock: 0.0,
+            last_fact: f64::NEG_INFINITY,
+            max_armed: true,
         };
         c.apply_config();
         c
@@ -116,7 +124,7 @@ impl Control {
         let add = amount * sc.strength;
         *self.counts.entry(name.to_string()).or_default() += 1;
         if !matches!(name, "fire" | "hit" | "crit" | "ability" | "heal") {
-            self.recent.push_back((Instant::now(), name.to_string()));
+            self.recent.push_back((self.clock, name.to_string()));
             if self.recent.len() > 40 {
                 self.recent.pop_front();
             }
@@ -146,6 +154,9 @@ impl Control {
     }
 
     pub fn hook(&mut self, l: &HookLine) {
+        if l.hp.is_some() || l.ammo.is_some() || l.spd.is_some() || l.dead.is_some() || l.hpm.is_some() {
+            self.last_fact = self.clock;
+        }
         if let Some(v) = &l.ready {
             self.note(format!("hook ready (v{v})"));
         }
@@ -233,7 +244,7 @@ impl Control {
     }
 
     fn event(&mut self, ev: HookEvent) {
-        let now = Instant::now();
+        let now = self.clock;
         match ev {
             HookEvent::Simple(name) => match name.as_str() {
                 "kill" => {
@@ -283,11 +294,12 @@ impl Control {
 
     /// Advance envelopes by `dt` seconds and resolve the kill-streak fallback.
     pub fn tick(&mut self, dt: f32) {
-        let now = Instant::now();
-        let near = |t: Option<Instant>, at: Instant, win: f32| t.is_some_and(|t| (t.max(at) - t.min(at)).as_secs_f32() < win);
+        self.clock += dt as f64;
+        let now = self.clock;
+        let near = |t: Option<f64>, at: f64, win: f64| t.is_some_and(|t| (t - at).abs() < win);
         let mut fire_kill = 0;
         self.pending_ks.retain(|&at| {
-            if now.duration_since(at).as_secs_f32() < 0.4 {
+            if now - at < 0.4 {
                 return true;
             }
             if !near(self.t_kill, at, 1.5) && !near(self.t_assist, at, 2.0) {
@@ -328,13 +340,13 @@ impl Control {
             .filter(|(k, _)| k.as_str() != "energy")
             .map(|(k, w)| w * self.signal(k))
             .sum();
-        self.level("energy", if self.live || self.holds.contains_key("energy") { e.clamp(0.0, 1.0) } else { 0.0 });
+        let on = self.in_match() || self.holds.contains_key("energy");
+        self.level("energy", if on { e.clamp(0.0, 1.0) } else { 0.0 });
         let facts: Vec<(String, f32)> = self.facts.iter().map(|(k, v)| (k.clone(), *v)).collect();
         for (k, v) in facts {
             self.level(&k, v);
         }
-        let now_h = Instant::now();
-        self.holds.retain(|_, until| *until > now_h);
+        self.holds.retain(|_, until| *until > now);
         let held: Vec<String> = self.holds.keys().cloned().collect();
         for name in held {
             self.level(&name, 1.0);
@@ -362,6 +374,19 @@ impl Control {
                 e.value = 0.0;
             }
         }
+        let energy = self.signal("energy");
+        if self.max_armed && energy >= 0.9 {
+            self.max_armed = false;
+            self.pulse("max_energy", 1.0);
+        } else if energy < 0.6 {
+            self.max_armed = true;
+        }
+    }
+
+    /// In a match: the hook said so, or it has been reporting gameplay facts recently. (The hook
+    /// only sends `live` when it changes, so an engine started mid-match never hears it.)
+    pub fn in_match(&self) -> bool {
+        self.live || self.clock - self.last_fact < 15.0
     }
 
     pub fn set_fact(&mut self, name: &str, v: f32) {
@@ -372,7 +397,7 @@ impl Control {
     pub fn test(&mut self, name: &str, secs: f32) {
         const LEVELS: [&str; 7] = ["dead", "low_health", "speed", "shop", "scoreboard", "combat", "energy"];
         if LEVELS.contains(&name) {
-            self.holds.insert(name.to_string(), Instant::now() + std::time::Duration::from_secs_f32(secs));
+            self.holds.insert(name.to_string(), self.clock + secs as f64);
         } else {
             let sc = self.cfg.signals.get(name).map_or(1.0, |s| s.strength.max(1e-3));
             self.pulse(name, 1.0 / sc); // full-scale regardless of per-event strength

@@ -341,7 +341,7 @@ pub fn run(hub: Arc<Hub>, rx: Receiver<Cmd>, cfg: Config, opts: Opts) -> Result<
             (s.hp, s.hpm, s.ammo, s.ammom, s.spd) = (ctl.hp, ctl.hpm, ctl.ammo, ctl.ammom, ctl.spd);
             s.spd_range = ctl.spd_range;
             s.dead = ctl.dead;
-            s.live = ctl.live;
+            s.live = ctl.in_match();
             s.game_running = game_up;
             s.input = src.to_string();
             s.hook = hook_ver.clone();
@@ -354,7 +354,7 @@ pub fn run(hub: Arc<Hub>, rx: Receiver<Cmd>, cfg: Config, opts: Opts) -> Result<
             s.drift_ppm = ppm;
             s.xruns = sh.underruns.load(Ordering::Relaxed);
             s.bypass = sh.bypass.load(Ordering::Relaxed);
-            s.recent = ctl.recent.iter().rev().map(|(t, n)| (now.duration_since(*t).as_secs_f32(), n.clone())).collect();
+            s.recent = ctl.recent.iter().rev().map(|(t, n)| ((ctl.clock - t) as f32, n.clone())).collect();
             s.cfg_gen = hub.active.lock().unwrap().0;
             s.demo = demo.as_ref().map(Demo::elapsed);
             s.stems = sh.stems_enabled.load(Ordering::Relaxed);

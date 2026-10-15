@@ -9,7 +9,7 @@
     "use strict";
 
     var PREFIX = "[SIDECHAIN]";
-    var VERSION = "0.1.1";
+    var VERSION = "0.1.2";
     var FAST = 0.033;              // seconds between polls of ammo / health / speed / hits
     var SLOW_EVERY = 4;            // the rest every Nth poll (~130 ms)
     var MISSING_RETRY_MS = 1000;   // throttle FindChildTraverse for panels that aren't there yet
@@ -214,41 +214,65 @@
         ksLast = count;
     }
 
-    // Objective team messages ("Enemy Yellow Tier 1" / "DESTROYED"); .IsPositive = good for us.
-    var teamSig = "";
-    function pollTeamMsg(root) {
-        var mains = byClass(root, "messageMain");
-        var sig = "", payload = null;
-        for (var i = 0; i < mains.length; i++) {
-            var m = text(mains[i]);
-            if (!m) continue;
-            var box = mains[i].GetParent();
-            var subs = byClass(box, "subText");
-            var sub = subs.length ? text(subs[0]) || "" : "";
-            var shown = false;
-            try { shown = mains[i].actuallayoutheight > 0; } catch (e) {}
-            var pos = ancestorHas(mains[i], "IsPositive", 6);
-            sig += m + "|" + sub + "|" + shown + "|" + pos + ";";
-            if (shown) payload = ["txt", "team", m, sub, pos ? 1 : 0];
+    // All label texts under a panel (html tags stripped), depth-limited.
+    function labelTexts(p, out, depth) {
+        if (!valid(p) || depth > 8) return out;
+        if (p.paneltype === "Label") {
+            var t = text(p);
+            if (t) {
+                t = t.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+                if (t) out.push(t);
+            }
         }
-        if (sig !== teamSig) { teamSig = sig; if (payload) event(payload); }
+        var ch = kids(p);
+        for (var i = 0; i < ch.length; i++) labelTexts(ch[i], out, depth + 1);
+        return out;
     }
 
-    // Game announcement toasts (generic title/description snippets).
-    var toastsSeen = [];
+    // Objective banners ("Enemy Yellow Tier 1" / "DESTROYED"): every label under #TeamMsg.
+    // Emitted when the text changes; .IsPositive on an ancestor = good for the local team.
+    var teamSig = "";
+    function pollTeamMsg() {
+        var box = find("TeamMsg");
+        if (!box) return;
+        var texts = labelTexts(box, [], 0);
+        var sig = texts.join("|");
+        if (sig === teamSig) return;
+        teamSig = sig;
+        if (!texts.length) return;
+        var pos = ancestorHas(box, "IsPositive", 6);
+        event(["txt", "team", texts[0], texts.slice(1).join(" / "), pos ? 1 : 0]);
+    }
+
+    // Game announcement toasts. The text is often bound a moment after .ToastVisible lands, so
+    // re-read for up to ~2.5 s; if it never fills, emit the panel ids so the toast can be named.
+    var toasts = []; // {p, tries, sent}
     function pollToasts() {
         var tm = find("ToastManager");
         if (!tm) return;
         var keep = [];
-        for (var i = 0; i < toastsSeen.length; i++) if (valid(toastsSeen[i])) keep.push(toastsSeen[i]);
-        toastsSeen = keep;
+        for (var i = 0; i < toasts.length; i++) if (valid(toasts[i].p)) keep.push(toasts[i]);
+        toasts = keep;
         var ch = kids(tm);
         for (var j = 0; j < ch.length; j++) {
             var t = ch[j];
-            if (!has(t, "ToastVisible") || toastsSeen.indexOf(t) !== -1) continue;
-            toastsSeen.push(t);
-            var title = byClass(t, "AnnouncementTitle"), desc = byClass(t, "AnnouncementDescription");
-            event(["txt", "toast", title.length ? text(title[0]) || "" : "", desc.length ? text(desc[0]) || "" : ""]);
+            if (!has(t, "ToastVisible")) continue;
+            var rec = null;
+            for (var k = 0; k < toasts.length; k++) if (toasts[k].p === t) { rec = toasts[k]; break; }
+            if (!rec) { rec = { p: t, tries: 0, sent: false }; toasts.push(rec); }
+            if (rec.sent) continue;
+            rec.tries++;
+            var texts = labelTexts(t, [], 0);
+            if (texts.length) {
+                rec.sent = true;
+                event(["txt", "toast", texts[0], texts.slice(1).join(" / ")]);
+            } else if (rec.tries > 20) {
+                rec.sent = true;
+                var ids = [];
+                var c2 = kids(t);
+                for (var m = 0; m < c2.length; m++) ids.push((c2[m].paneltype || "?") + "#" + (c2[m].id || ""));
+                event(["txt", "toast", "", "panels: " + ids.join(",")]);
+            }
         }
     }
 
@@ -281,7 +305,7 @@
         var mb = find("MidbossTimerLabel");
         if (mb) field("mb", text(mb) || "");
         field("live", player ? 1 : 0);
-        pollTeamMsg(root);
+        pollTeamMsg();
         pollToasts();
         pollAbilities();
     }
@@ -320,6 +344,10 @@
             pollImpacts();
             if (tick % SLOW_EVERY === 0) pollSlow();
             if (tick % 150 === 0) field("hb", Math.floor(tick / 150) % 2); // ~5s heartbeat flip
+            if (tick % 90 === 45) {
+                // keyframe: forget the slow fields so the next slow poll re-sends them (~3 s)
+                ["live", "dead", "hpm", "ammom", "shop", "sb", "combat", "mb"].forEach(function (k) { delete last[k]; });
+            }
         } catch (e) {
             out.err = String(e);
         }

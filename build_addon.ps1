@@ -70,8 +70,11 @@ if (Get-Process -Name "deadlock" -ErrorAction SilentlyContinue) {
     throw "Deadlock is running. Close it first: installed VPKs are file-locked while the game is up."
 }
 # Every installed copy = any addon VPK that contains our script (Mod Manager renames/copies them).
-$installed = Get-ChildItem $Addons -Recurse -Filter *.vpk | Where-Object {
-    Select-String -Path $_.FullName -Pattern "sidechain_hook" -SimpleMatch -Quiet
+# Only small VPKs can be ours (~20 KB); the addons folder can hold many GB of other mods.
+$needle = [Text.Encoding]::ASCII.GetBytes("sidechain_hook")
+$installed = Get-ChildItem $Addons -Recurse -Filter *.vpk | Where-Object { $_.Length -lt 1MB } | Where-Object {
+    $bytes = [IO.File]::ReadAllBytes($_.FullName)
+    ([Text.Encoding]::ASCII.GetString($bytes)).Contains("sidechain_hook")
 }
 if (-not $installed) { throw "no installed copy found under $Addons - add dist\sidechain-hook.vpk in Mod Manager first" }
 foreach ($f in $installed) {
