@@ -11,7 +11,7 @@ use eframe::egui::{
     self, Align2, Color32, CornerRadius, FontId, Pos2, Rect, RichText, Sense, Stroke, StrokeKind, Ui, Vec2, vec2,
 };
 
-use crate::config::{Config, PARAMS, Param, ParamValues, Route, RuleCfg, SignalCfg};
+use crate::config::{Config, PARAMS, Param, ParamValues, Route, RuleCfg, STEM_PARAMS, SignalCfg};
 use crate::hub::{Cmd, Hub, Snapshot, log_lines};
 use crate::presets::{self, Preset};
 use crate::{CLEANED, STOP};
@@ -357,7 +357,7 @@ fn card<R>(ui: &mut Ui, title: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
 fn targets_at(cfg: &Config, energy: f32) -> ParamValues {
     let mut v = cfg.base_values();
     for r in cfg.mix.routes.iter().filter(|r| r.signal == "energy") {
-        v[r.param.index()] += cfg.master.intensity * r.amount * energy;
+        v[r.param.index()] += cfg.master.intensity * r.amount * r.shape(energy);
     }
     v[Param::GainDb.index()] += cfg.master.trim_db;
     for p in PARAMS {
@@ -718,14 +718,48 @@ impl App {
                     ("Low-pass", format!("{:.0} Hz", 20000.0 * 2f32.powf(g(Param::LowpassOct)))),
                     ("High-pass", format!("{:.0} Hz", 20.0 * 2f32.powf(g(Param::HighpassOct)))),
                     ("Drive", format!("{:.2}", g(Param::Drive))),
-                ] {
-                    egui::Frame::new().fill(Color32::from_rgb(32, 35, 42)).corner_radius(CornerRadius::same(4)).inner_margin(egui::Margin::symmetric(8, 3)).show(ui, |ui| {
-                        ui.label(RichText::new(format!("{label} {val}")).size(12.0).monospace());
-                    });
+                ]
+                .into_iter()
+                .chain(
+                    snap.stems
+                        .then(|| STEM_PARAMS.map(|p| (p.name(), format!("{:+.0} dB", g(p)))))
+                        .into_iter()
+                        .flatten()
+                        .map(|(n, v)| (match n { "drums" => "Drums", "vocals" => "Vocals", _ => "Music" }, v)),
+                ) {
+                    // plain labels (sized before layout) so the row wraps; frames can't
+                    let chip = RichText::new(format!(" {label} {val} ")).size(12.0).monospace().background_color(Color32::from_rgb(32, 35, 42));
+                    ui.add(egui::Label::new(chip).extend());
                 }
             });
         });
         ui.add_space(8.0);
+        if snap.stems {
+            card(ui, "Stems", |ui| {
+                ui.columns(3, |cols| {
+                    for (i, p) in STEM_PARAMS.into_iter().enumerate() {
+                        let gain = snap.targets[p.index()];
+                        let lvl = snap.stem_levels[i];
+                        let ui = &mut cols[i];
+                        {
+                            let name = ["DRUMS", "VOCALS", "MUSIC"][i];
+                            let on = gain > -20.0;
+                            ui.label(RichText::new(name).strong().color(if on { ACCENT } else { DIM }));
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("level").size(11.0).color(DIM));
+                                meter(ui, (gain + 40.0) / 46.0, vec2(110.0, 9.0), lerp_color(CALM, ACCENT, (gain + 40.0) / 40.0));
+                                ui.label(RichText::new(format!("{gain:+.0} dB")).monospace().size(11.0));
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("signal").size(11.0).color(DIM));
+                                meter(ui, (lvl + 60.0) / 60.0, vec2(110.0, 5.0), Color32::from_gray(150));
+                            });
+                        }
+                    }
+                });
+            });
+            ui.add_space(8.0);
+        }
 
         ui.columns(2, |cols| {
             card(&mut cols[0], "Game", |ui| {
@@ -862,10 +896,12 @@ impl App {
             self.test_button(ui, "energy", "Test full");
         });
         ui.add_space(8.0);
+        self.stems_card(ui);
+        ui.add_space(8.0);
         ui.columns(2, |cols| {
             card(&mut cols[0], "Calm state (nothing happening)", |ui| {
                 egui::Grid::new("base").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                    for p in PARAMS {
+                    for p in PARAMS.into_iter().filter(|p| !p.is_stem()) {
                         let (lo, hi) = p.range();
                         let mut v = *self.draft.base.get(&p).unwrap_or(&p.neutral());
                         ui.label(p.label());
@@ -882,7 +918,7 @@ impl App {
             });
             card(&mut cols[1], "Full energy adds", |ui| {
                 egui::Grid::new("full").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                    for p in PARAMS {
+                    for p in PARAMS.into_iter().filter(|p| !p.is_stem()) {
                         let (lo, hi) = p.amount_range();
                         let (lo, hi) = if p == Param::HighpassOct || p == Param::LowpassOct { (-7.0, 7.0) } else { (lo.min(-hi), hi.max(-lo)) };
                         let idx = self.draft.mix.routes.iter().position(|r| r.signal == "energy" && r.param == p);
@@ -894,7 +930,7 @@ impl App {
                                     self.draft.mix.routes.remove(i);
                                 }
                                 Some(i) => self.draft.mix.routes[i].amount = v,
-                                None => self.draft.mix.routes.push(Route { signal: "energy".into(), param: p, amount: v }),
+                                None => self.draft.mix.routes.push(Route::new("energy", p, v)),
                             }
                         }
                         ui.end_row();
@@ -940,6 +976,60 @@ impl App {
                     }
                 });
             }
+        });
+    }
+
+    /// Each stem: a calm level, and the slice of energy over which it comes back to 0 dB.
+    fn stems_card(&mut self, ui: &mut Ui) {
+        card(ui, "Stems", |ui| {
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut self.draft.stems.enabled, RichText::new("Split the track into drums / vocals / music").strong());
+                ui.label(RichText::new("real-time approximation on the CPU, adds ~43 ms").size(11.0).color(DIM));
+            });
+            if !self.draft.stems.enabled {
+                return;
+            }
+            ui.add_space(4.0);
+            egui::Grid::new("stems").num_columns(4).spacing([14.0, 8.0]).show(ui, |ui| {
+                for h in ["", "calm level", "comes in from", "fully in at"] {
+                    ui.label(RichText::new(h).size(11.0).color(DIM));
+                }
+                ui.end_row();
+                for p in STEM_PARAMS {
+                    let name = match p {
+                        Param::DrumsDb => "Drums",
+                        Param::VocalsDb => "Vocals",
+                        _ => "Music",
+                    };
+                    ui.label(RichText::new(name).strong());
+                    let mut calm = *self.draft.base.get(&p).unwrap_or(&0.0);
+                    let changed = ui.add(egui::Slider::new(&mut calm, -40.0..=0.0).suffix(" dB").fixed_decimals(0)).changed();
+                    let idx = self.draft.mix.routes.iter().position(|r| r.signal == "energy" && r.param == p);
+                    let (mut from, mut to) = idx.map_or((0.0, 1.0), |i| (self.draft.mix.routes[i].from, self.draft.mix.routes[i].to));
+                    let f = ui.add_enabled(calm < -0.5, egui::Slider::new(&mut from, 0.0..=1.0).custom_formatter(|v, _| format!("{:.0}% energy", v * 100.0)));
+                    let t = ui.add_enabled(calm < -0.5, egui::Slider::new(&mut to, 0.0..=1.0).custom_formatter(|v, _| format!("{:.0}% energy", v * 100.0)));
+                    ui.end_row();
+                    if changed || f.changed() || t.changed() {
+                        if calm.abs() < 0.5 {
+                            self.draft.base.remove(&p);
+                            if let Some(i) = idx {
+                                self.draft.mix.routes.remove(i);
+                            }
+                        } else {
+                            self.draft.base.insert(p, calm);
+                            let to = to.max(from + 0.01);
+                            match idx {
+                                Some(i) => {
+                                    let r = &mut self.draft.mix.routes[i];
+                                    (r.amount, r.from, r.to) = (-calm, from, to);
+                                }
+                                None => self.draft.mix.routes.push(Route { from, to, ..Route::new("energy", p, -calm) }),
+                            }
+                        }
+                    }
+                }
+            });
+            ui.label(RichText::new("Each stem sits at its calm level and rises back to full as energy passes through its range. Other routes (e.g. kill -> drums) still add on top.").size(11.0).color(DIM));
         });
     }
 
@@ -1016,12 +1106,16 @@ impl App {
             });
             if ui.button("+ Add route").clicked() {
                 let sig = if self.route_filter.is_empty() { "kill".to_string() } else { self.route_filter.clone() };
-                self.draft.mix.routes.push(Route { signal: sig, param: Param::BassDb, amount: 3.0 });
+                self.draft.mix.routes.push(Route::new(&sig, Param::BassDb, 3.0));
             }
         });
         ui.add_space(6.0);
         let mut remove: Option<usize> = None;
-        egui::Grid::new("routes").num_columns(4).striped(true).spacing([10.0, 6.0]).show(ui, |ui| {
+        egui::Grid::new("routes").num_columns(5).striped(true).spacing([10.0, 6.0]).show(ui, |ui| {
+            for h in ["signal", "parameter", "amount", "active over signal range", ""] {
+                ui.label(RichText::new(h).size(11.0).color(DIM));
+            }
+            ui.end_row();
             for (i, r) in self.draft.mix.routes.iter_mut().enumerate() {
                 if !self.route_filter.is_empty() && r.signal != self.route_filter {
                     continue;
@@ -1031,6 +1125,13 @@ impl App {
                 let (lo, hi) = r.param.amount_range();
                 let (lo, hi) = (lo.min(r.amount), hi.max(r.amount));
                 ui.add(egui::Slider::new(&mut r.amount, lo..=hi).fixed_decimals(2));
+                ui.horizontal(|ui| {
+                    ui.add(egui::DragValue::new(&mut r.from).range(0.0..=1.0).speed(0.01).fixed_decimals(2));
+                    ui.label("to");
+                    ui.add(egui::DragValue::new(&mut r.to).range(0.0..=1.0).speed(0.01).fixed_decimals(2));
+                })
+                .response
+                .on_hover_text("Below 'from' the route adds nothing; at 'to' it adds the full amount");
                 if ui.small_button("x").clicked() {
                     remove = Some(i);
                 }

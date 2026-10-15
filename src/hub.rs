@@ -52,6 +52,8 @@ pub struct Snapshot {
     pub cfg_gen: u64,
     /// Seconds into the demo, if one is playing.
     pub demo: Option<f32>,
+    pub stems: bool,
+    pub stem_levels: [f32; 3],
 }
 
 impl Default for Snapshot {
@@ -86,6 +88,8 @@ impl Default for Snapshot {
             recent: Vec::new(),
             cfg_gen: 0,
             demo: None,
+            stems: false,
+            stem_levels: [-90.0; 3],
         }
     }
 }

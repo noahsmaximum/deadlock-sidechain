@@ -386,7 +386,7 @@ impl Control {
             if self.cfg.signals.get(&r.signal).is_some_and(|s| !s.enabled) {
                 continue;
             }
-            v[r.param.index()] += k * r.amount * self.signal(&r.signal);
+            v[r.param.index()] += k * r.amount * r.shape(self.signal(&r.signal));
         }
         v[Param::GainDb.index()] += self.cfg.master.trim_db;
         for p in PARAMS {

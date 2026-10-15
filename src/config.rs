@@ -21,9 +21,12 @@ pub enum Param {
     TrebleDb,
     Width,
     Drive,
+    DrumsDb,
+    VocalsDb,
+    MusicDb,
 }
 
-pub const PARAMS: [Param; 9] = [
+pub const PARAMS: [Param; 12] = [
     Param::GainDb,
     Param::LowpassOct,
     Param::HighpassOct,
@@ -33,7 +36,13 @@ pub const PARAMS: [Param; 9] = [
     Param::TrebleDb,
     Param::Width,
     Param::Drive,
+    Param::DrumsDb,
+    Param::VocalsDb,
+    Param::MusicDb,
 ];
+
+/// The stem gains (drums, vocals, music), in PARAMS order.
+pub const STEM_PARAMS: [Param; 3] = [Param::DrumsDb, Param::VocalsDb, Param::MusicDb];
 
 impl Param {
     pub fn index(self) -> usize {
@@ -50,7 +59,13 @@ impl Param {
             Param::TrebleDb => "treb",
             Param::Width => "width",
             Param::Drive => "drive",
+            Param::DrumsDb => "drums",
+            Param::VocalsDb => "vocals",
+            Param::MusicDb => "music",
         }
+    }
+    pub fn is_stem(self) -> bool {
+        STEM_PARAMS.contains(&self)
     }
     pub fn label(self) -> &'static str {
         match self {
@@ -63,6 +78,9 @@ impl Param {
             Param::TrebleDb => "Treble (dB)",
             Param::Width => "Width",
             Param::Drive => "Drive",
+            Param::DrumsDb => "Drums stem (dB)",
+            Param::VocalsDb => "Vocals stem (dB)",
+            Param::MusicDb => "Music stem (dB)",
         }
     }
     /// Value with no modulation.
@@ -78,6 +96,7 @@ impl Param {
             Param::BassDb | Param::MidDb | Param::TrebleDb => (-18.0, 12.0),
             Param::Width => (0.0, 2.0),
             Param::Drive => (0.0, 1.0),
+            Param::DrumsDb | Param::VocalsDb | Param::MusicDb => (-40.0, 6.0),
         }
     }
     /// Sensible slider range for a route amount on this param.
@@ -89,6 +108,7 @@ impl Param {
             Param::Resonance | Param::Drive => (0.0, 1.0),
             Param::BassDb | Param::MidDb | Param::TrebleDb => (-18.0, 12.0),
             Param::Width => (-1.0, 1.0),
+            Param::DrumsDb | Param::VocalsDb | Param::MusicDb => (-40.0, 40.0),
         }
     }
     pub fn clamp(self, v: f32) -> f32 {
@@ -114,6 +134,17 @@ pub struct Config {
     pub mix: Mix,
     #[serde(default)]
     pub text: Text,
+    #[serde(default)]
+    pub stems: StemsCfg,
+}
+
+/// Approximate real-time stems (drums / vocals / music). Their gains are the drums_db /
+/// vocals_db / music_db params, so the calm state and routes drive them like anything else.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct StemsCfg {
+    #[serde(default)]
+    pub enabled: bool,
 }
 
 /// `energy` = clamp(sum of weight x signal) — how much is going on. Its envelope lives in
@@ -216,6 +247,32 @@ pub struct Route {
     pub signal: String,
     pub param: Param,
     pub amount: f32,
+    /// The route only responds over this slice of the signal: below `from` it adds nothing,
+    /// at `to` and above it adds the full amount (linear in between).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub from: f32,
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub to: f32,
+}
+
+impl Route {
+    pub fn new(signal: &str, param: Param, amount: f32) -> Self {
+        Route { signal: signal.into(), param, amount, from: 0.0, to: 1.0 }
+    }
+    /// Signal value 0..1 -> how much of `amount` applies.
+    pub fn shape(&self, s: f32) -> f32 {
+        if self.to <= self.from + 1e-4 {
+            return if s >= self.from { 1.0 } else { 0.0 };
+        }
+        ((s - self.from) / (self.to - self.from)).clamp(0.0, 1.0)
+    }
+}
+
+fn is_zero(v: &f32) -> bool {
+    *v == 0.0
+}
+fn is_one(v: &f32) -> bool {
+    *v == 1.0
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]

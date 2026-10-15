@@ -10,8 +10,9 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, anyhow};
 use wasapi::{AudioClient, DeviceEnumerator, Direction, SampleType, StreamMode, WaveFormat};
 
-use crate::config::{PARAMS, ParamValues};
+use crate::config::{PARAMS, ParamValues, STEM_PARAMS};
 use crate::dsp::Chain;
+use crate::stems::Stems;
 
 pub const RATE: usize = 48_000;
 const MAX_QUEUE_FRAMES: usize = RATE; // 1 s; anything beyond is dropped as stale
@@ -33,6 +34,9 @@ pub struct Shared {
     pub out_peak: AtomicU32,  // f32 bits
     pub capturing: AtomicBool,
     pub output_name: Mutex<String>,
+    pub stems_enabled: AtomicBool,
+    /// Stem activity in dB (f32 bits): drums, vocals, music.
+    pub stem_levels: [AtomicU32; 3],
 }
 
 impl Shared {
@@ -54,6 +58,8 @@ impl Shared {
             out_peak: AtomicU32::new(0),
             capturing: AtomicBool::new(false),
             output_name: Mutex::new(String::new()),
+            stems_enabled: AtomicBool::new(false),
+            stem_levels: [AtomicU32::new(0), AtomicU32::new(0), AtomicU32::new(0)],
         })
     }
 }
@@ -225,8 +231,9 @@ pub fn spawn_render(sh: Arc<Shared>) {
             let _ = wasapi::initialize_mta();
             let mut chain = Chain::new(RATE as f32);
             let mut rs = Resampler::new();
+            let mut stems: Option<Stems> = None;
             while !sh.stop.load(Ordering::Relaxed) {
-                if let Err(e) = render(&sh, &mut chain, &mut rs) {
+                if let Err(e) = render(&sh, &mut chain, &mut rs, &mut stems) {
                     crate::log(format!("render: {e}"));
                     std::thread::sleep(Duration::from_secs(1));
                 }
@@ -243,7 +250,7 @@ fn resolve_output(en: &DeviceEnumerator, id: &str) -> Result<wasapi::Device> {
     }
 }
 
-fn render(sh: &Shared, chain: &mut Chain, rs: &mut Resampler) -> Result<()> {
+fn render(sh: &Shared, chain: &mut Chain, rs: &mut Resampler, stems: &mut Option<Stems>) -> Result<()> {
     let en = DeviceEnumerator::new()?;
     let want = sh.output_id.lock().unwrap().clone();
     let dev = resolve_output(&en, &want)?;
@@ -280,6 +287,19 @@ fn render(sh: &Shared, chain: &mut Chain, rs: &mut Resampler) -> Result<()> {
             targets = *t;
         }
         chain.bypass = sh.bypass.load(Ordering::Relaxed);
+        match (sh.stems_enabled.load(Ordering::Relaxed), stems.is_some()) {
+            (true, false) => *stems = Some(Stems::new(RATE as f32)),
+            (false, true) => *stems = None,
+            _ => {}
+        }
+        if let Some(st) = stems.as_mut() {
+            // bypass keeps the stems in the path at unity so latency doesn't jump on A/B
+            let db = if chain.bypass { [0.0; 3] } else { STEM_PARAMS.map(|p| targets[p.index()]) };
+            st.process(&mut f32buf, db);
+            for i in 0..3 {
+                sh.stem_levels[i].store(st.levels_db[i].to_bits(), Ordering::Relaxed);
+            }
+        }
         chain.process(&mut f32buf, &targets);
         for s in &f32buf {
             peak = peak.max(s.abs());
