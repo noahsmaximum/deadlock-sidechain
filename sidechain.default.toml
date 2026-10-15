@@ -1,0 +1,125 @@
+# Sidechain — Deadlock gameplay -> Spotify EQ.
+# This file hot-reloads: save it while sidechain is running and the change applies immediately.
+
+[audio]
+app = "Spotify.exe"                  # process whose audio gets processed
+sink = "Steam Streaming Speakers"    # silent device the app is re-pointed to while we run
+output = ""                          # where processed audio plays; "" = the app's previous device
+latency_ms = 30                      # capture->output buffer (drift-corrected)
+only_with_game = true                # leave Spotify alone unless deadlock.exe is running
+
+[input]
+netcon_port = 29000                  # matches Deadlock launch option  -netconport 29000
+console_log = ""                     # "" = auto-detect <Deadlock>\game\citadel\console.log  (needs -condebug)
+
+# ---------------------------------------------------------------------------------------------
+# PARAMETERS the routes below push around. Each route adds  amount x signal(0..1)  to a parameter.
+#   gain_db       output level                      base 0
+#   lowpass_oct   octaves below 20 kHz (negative)   base 0     -1 = 10k, -3 = 2.5k, -5 = 625 Hz
+#   highpass_oct  octaves above 20 Hz (positive)    base 0     +3 = 160 Hz, +5 = 640 Hz
+#   resonance     lowpass resonance 0..1            base 0
+#   bass_db       low shelf  @ 120 Hz               base 0
+#   mid_db        bell       @ 1 kHz                base 0
+#   treble_db     high shelf @ 6 kHz                base 0
+#   width         stereo width (1 = as is, 0 = mono, 2 = extra wide)   base 1
+#   drive         soft saturation 0..1              base 0
+[base]
+gain_db = 0.0
+width = 1.0
+
+# ---------------------------------------------------------------------------------------------
+# SIGNALS. Pulses (events) jump by `strength` (scaled where noted) and decay; levels follow a state.
+#   attack_ms / release_ms shape how fast a signal rises / falls.
+[signals]
+fire          = { attack_ms = 0,   release_ms = 160,  strength = 0.35 }   # per bullet (ammo counter)
+hit           = { attack_ms = 0,   release_ms = 120,  strength = 1.0 }    # hit marker on an enemy
+crit          = { attack_ms = 0,   release_ms = 220,  strength = 1.0 }    # headshot / crit marker
+damage        = { attack_ms = 5,   release_ms = 700,  scale = 5.0 }       # hp lost / max hp x scale
+heal          = { attack_ms = 30,  release_ms = 600,  scale = 4.0 }
+reload        = { attack_ms = 0,   release_ms = 300,  strength = 1.0 }
+kill          = { attack_ms = 30,  release_ms = 2500, strength = 1.0 }
+assist        = { attack_ms = 30,  release_ms = 1500, strength = 1.0 }
+death         = { attack_ms = 0,   release_ms = 900,  strength = 1.0 }    # the moment you die
+respawn       = { attack_ms = 0,   release_ms = 1200, strength = 1.0 }
+ability       = { attack_ms = 0,   release_ms = 250,  strength = 1.0 }    # any ability cast
+ultimate      = { attack_ms = 0,   release_ms = 900,  strength = 1.0 }    # slot 4
+objective_win = { attack_ms = 200, release_ms = 6000, strength = 1.0 }    # enemy guardian/walker/shrine down
+objective_loss= { attack_ms = 200, release_ms = 5000, strength = 1.0 }    # ours down
+patron_win    = { attack_ms = 300, release_ms = 12000, strength = 1.0 }
+midboss       = { attack_ms = 300, release_ms = 8000, strength = 1.0 }
+# levels
+dead          = { attack_ms = 400, release_ms = 1500 }
+low_health    = { attack_ms = 300, release_ms = 1000, threshold = 0.35 }  # 0 above 35% hp -> 1 at 0 hp
+speed         = { attack_ms = 250, release_ms = 700,  min = 7.0, max = 13.0 }  # movespeed readout (m/s)
+shop          = { attack_ms = 200, release_ms = 300 }
+scoreboard    = { attack_ms = 150, release_ms = 300 }
+combat        = { attack_ms = 500, release_ms = 3000 }
+
+# ---------------------------------------------------------------------------------------------
+# ROUTES — the sound design.
+[mix]
+routes = [
+  # guns punch through: every shot ducks the low end + level like a sidechain compressor
+  { signal = "fire",           param = "bass_db",      amount = -5.0 },
+  { signal = "fire",           param = "gain_db",      amount = -2.5 },
+  # landing shots sparkle, crits more so
+  { signal = "hit",            param = "treble_db",    amount = 1.5 },
+  { signal = "crit",           param = "treble_db",    amount = 3.0 },
+  { signal = "crit",           param = "mid_db",       amount = 1.0 },
+  # taking damage muffles the track for a moment
+  { signal = "damage",         param = "lowpass_oct",  amount = -3.5 },
+  { signal = "damage",         param = "gain_db",      amount = -2.0 },
+  # low health: closing in, narrowing
+  { signal = "low_health",     param = "lowpass_oct",  amount = -2.0 },
+  { signal = "low_health",     param = "width",        amount = -0.5 },
+  # dead: underwater
+  { signal = "dead",           param = "lowpass_oct",  amount = -5.0 },
+  { signal = "dead",           param = "resonance",    amount = 0.35 },
+  { signal = "dead",           param = "gain_db",      amount = -6.0 },
+  { signal = "dead",           param = "width",        amount = -0.8 },
+  # back in: a quick bright swell
+  { signal = "respawn",        param = "treble_db",    amount = 3.0 },
+  # speed: faster = brighter + wider
+  { signal = "speed",          param = "treble_db",    amount = 3.0 },
+  { signal = "speed",          param = "width",        amount = 0.4 },
+  # kills hit like a drop
+  { signal = "kill",           param = "bass_db",      amount = 4.0 },
+  { signal = "kill",           param = "treble_db",    amount = 3.0 },
+  { signal = "kill",           param = "gain_db",      amount = 1.5 },
+  { signal = "kill",           param = "drive",        amount = 0.25 },
+  { signal = "assist",         param = "bass_db",      amount = 2.0 },
+  { signal = "assist",         param = "treble_db",    amount = 1.5 },
+  # ult: thin high-pass whoosh that falls back in
+  { signal = "ultimate",       param = "highpass_oct", amount = 2.5 },
+  # objectives
+  { signal = "objective_win",  param = "bass_db",      amount = 5.0 },
+  { signal = "objective_win",  param = "treble_db",    amount = 4.0 },
+  { signal = "objective_win",  param = "width",        amount = 0.5 },
+  { signal = "objective_win",  param = "drive",        amount = 0.2 },
+  { signal = "objective_loss", param = "mid_db",       amount = -4.0 },
+  { signal = "objective_loss", param = "lowpass_oct",  amount = -1.5 },
+  { signal = "objective_loss", param = "gain_db",      amount = -2.0 },
+  { signal = "patron_win",     param = "bass_db",      amount = 6.0 },
+  { signal = "patron_win",     param = "treble_db",    amount = 5.0 },
+  { signal = "patron_win",     param = "width",        amount = 0.7 },
+  { signal = "patron_win",     param = "gain_db",      amount = 2.0 },
+  { signal = "midboss",        param = "bass_db",      amount = 6.0 },
+  { signal = "midboss",        param = "treble_db",    amount = 5.0 },
+  { signal = "midboss",        param = "width",        amount = 0.6 },
+  { signal = "midboss",        param = "gain_db",      amount = 2.0 },
+  # shop: music in the next room
+  { signal = "shop",           param = "lowpass_oct",  amount = -1.5 },
+  { signal = "shop",           param = "gain_db",      amount = -2.0 },
+]
+
+# ---------------------------------------------------------------------------------------------
+# TEXT RULES map HUD messages to signals. First match wins; regex syntax (Rust `regex`).
+#   source = "team"  objective banners ("Enemy Yellow Tier 1" / "DESTROYED"); `positive` = good for you
+#   source = "toast" game announcements (title + description)
+[text]
+rules = [
+  { source = "team",  match = "(?i)patron",           positive = true,  signal = "patron_win" },
+  { source = "team",  match = "",                     positive = true,  signal = "objective_win" },
+  { source = "team",  match = "",                     positive = false, signal = "objective_loss" },
+  { source = "toast", match = "(?i)mid.?boss|rejuv",                    signal = "midboss" },
+]
