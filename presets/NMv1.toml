@@ -1,0 +1,474 @@
+[master]
+intensity = 1.27
+trim_db = 0.0
+
+[base]
+gain_db = 2.0
+highpass_oct = 1.5
+bass_db = -18.0
+mid_db = -6.0
+width = 0.15
+drums_db = -40.0
+vocals_db = -40.0
+
+[signals.ability]
+attack_ms = 0.0
+release_ms = 250.0
+strength = 1.0
+scale = 1.0
+
+[signals.assist]
+attack_ms = 30.0
+release_ms = 2000.0
+strength = 1.0
+scale = 1.0
+
+[signals.combat]
+attack_ms = 500.0
+release_ms = 3000.0
+strength = 1.0
+scale = 1.0
+
+[signals.crit]
+attack_ms = 0.0
+release_ms = 300.0
+strength = 1.0
+scale = 1.0
+
+[signals.damage]
+attack_ms = 5.0
+release_ms = 900.0
+strength = 1.0
+scale = 5.0
+
+[signals.damage_dealt]
+attack_ms = 0.0
+release_ms = 1500.0
+strength = 1.0
+scale = 1.0
+
+[signals.dead]
+attack_ms = 400.0
+release_ms = 1500.0
+strength = 1.0
+scale = 1.0
+
+[signals.death]
+attack_ms = 0.0
+release_ms = 900.0
+strength = 1.0
+scale = 1.0
+
+[signals.energy]
+attack_ms = 250.0
+release_ms = 2500.0
+strength = 1.0
+scale = 1.0
+
+[signals.fire]
+attack_ms = 0.0
+release_ms = 180.0
+strength = 1.0
+scale = 1.0
+
+[signals.heal]
+attack_ms = 30.0
+release_ms = 600.0
+strength = 1.0
+scale = 4.0
+
+[signals.hit]
+attack_ms = 0.0
+release_ms = 150.0
+strength = 1.0
+scale = 1.0
+
+[signals.kill]
+attack_ms = 30.0
+release_ms = 3500.0
+strength = 1.0
+scale = 1.0
+
+[signals.low_health]
+attack_ms = 300.0
+release_ms = 1000.0
+strength = 1.0
+scale = 1.0
+threshold = 0.35
+
+[signals.max_energy]
+attack_ms = 0.0
+release_ms = 1500.0
+strength = 1.0
+scale = 1.0
+
+[signals.midboss]
+attack_ms = 300.0
+release_ms = 9000.0
+strength = 1.0
+scale = 1.0
+
+[signals.objective_loss]
+attack_ms = 200.0
+release_ms = 6000.0
+strength = 1.0
+scale = 1.0
+
+[signals.objective_win]
+attack_ms = 200.0
+release_ms = 7000.0
+strength = 1.0
+scale = 1.0
+
+[signals.patron_win]
+attack_ms = 300.0
+release_ms = 12000.0
+strength = 1.0
+scale = 1.0
+
+[signals.reload]
+attack_ms = 0.0
+release_ms = 300.0
+strength = 1.0
+scale = 1.0
+
+[signals.respawn]
+attack_ms = 0.0
+release_ms = 1500.0
+strength = 1.0
+scale = 1.0
+
+[signals.scoreboard]
+attack_ms = 150.0
+release_ms = 300.0
+strength = 1.0
+scale = 1.0
+
+[signals.shop]
+attack_ms = 200.0
+release_ms = 300.0
+strength = 1.0
+scale = 1.0
+
+[signals.speed]
+attack_ms = 150.0
+release_ms = 600.0
+strength = 1.0
+scale = 1.0
+min = 300.0
+max = 700.0
+
+[signals.ultimate]
+attack_ms = 0.0
+release_ms = 1200.0
+strength = 1.0
+scale = 1.0
+
+[energy.weights]
+ability = 0.25
+assist = 0.5
+combat = 0.3
+crit = 0.3
+damage = 0.4
+damage_dealt = 0.3
+death = -1.0
+fire = 0.35
+hit = 0.25
+kill = 0.9
+midboss = 0.8
+objective_win = 0.6
+patron_win = 1.0
+reload = -0.4
+speed = 0.5
+ultimate = 0.6
+
+[[mix.routes]]
+signal = "energy"
+param = "gain_db"
+amount = 11.0
+
+[[mix.routes]]
+signal = "energy"
+param = "width"
+amount = 1.0
+
+[[mix.routes]]
+signal = "energy"
+param = "bass_db"
+amount = 1.0
+
+[[mix.routes]]
+signal = "energy"
+param = "treble_db"
+amount = 2.0
+
+[[mix.routes]]
+signal = "fire"
+param = "bass_db"
+amount = -6.0
+
+[[mix.routes]]
+signal = "fire"
+param = "gain_db"
+amount = -3.0
+
+[[mix.routes]]
+signal = "hit"
+param = "treble_db"
+amount = 3.0
+
+[[mix.routes]]
+signal = "crit"
+param = "treble_db"
+amount = 6.0
+
+[[mix.routes]]
+signal = "crit"
+param = "mid_db"
+amount = 3.0
+
+[[mix.routes]]
+signal = "ability"
+param = "highpass_oct"
+amount = 1.2
+
+[[mix.routes]]
+signal = "ultimate"
+param = "highpass_oct"
+amount = 3.5
+
+[[mix.routes]]
+signal = "damage"
+param = "lowpass_oct"
+amount = -4.5
+
+[[mix.routes]]
+signal = "damage"
+param = "gain_db"
+amount = -3.0
+
+[[mix.routes]]
+signal = "low_health"
+param = "lowpass_oct"
+amount = -2.5
+
+[[mix.routes]]
+signal = "low_health"
+param = "width"
+amount = -0.5
+
+[[mix.routes]]
+signal = "dead"
+param = "lowpass_oct"
+amount = -5.5
+
+[[mix.routes]]
+signal = "dead"
+param = "resonance"
+amount = 0.4
+
+[[mix.routes]]
+signal = "dead"
+param = "gain_db"
+amount = -6.0
+
+[[mix.routes]]
+signal = "respawn"
+param = "treble_db"
+amount = 5.0
+
+[[mix.routes]]
+signal = "respawn"
+param = "width"
+amount = 0.5
+
+[[mix.routes]]
+signal = "kill"
+param = "bass_db"
+amount = 5.0
+
+[[mix.routes]]
+signal = "kill"
+param = "treble_db"
+amount = 4.0
+
+[[mix.routes]]
+signal = "kill"
+param = "gain_db"
+amount = 2.0
+
+[[mix.routes]]
+signal = "kill"
+param = "drive"
+amount = 0.4
+
+[[mix.routes]]
+signal = "kill"
+param = "width"
+amount = 0.4
+
+[[mix.routes]]
+signal = "assist"
+param = "bass_db"
+amount = 3.0
+
+[[mix.routes]]
+signal = "assist"
+param = "treble_db"
+amount = 2.0
+
+[[mix.routes]]
+signal = "objective_win"
+param = "bass_db"
+amount = 5.0
+
+[[mix.routes]]
+signal = "objective_win"
+param = "treble_db"
+amount = 5.0
+
+[[mix.routes]]
+signal = "objective_win"
+param = "width"
+amount = 0.5
+
+[[mix.routes]]
+signal = "objective_win"
+param = "drive"
+amount = 0.3
+
+[[mix.routes]]
+signal = "objective_loss"
+param = "mid_db"
+amount = -6.0
+
+[[mix.routes]]
+signal = "objective_loss"
+param = "lowpass_oct"
+amount = -2.0
+
+[[mix.routes]]
+signal = "objective_loss"
+param = "gain_db"
+amount = -3.0
+
+[[mix.routes]]
+signal = "patron_win"
+param = "bass_db"
+amount = 6.0
+
+[[mix.routes]]
+signal = "patron_win"
+param = "treble_db"
+amount = 6.0
+
+[[mix.routes]]
+signal = "patron_win"
+param = "width"
+amount = 0.8
+
+[[mix.routes]]
+signal = "patron_win"
+param = "gain_db"
+amount = 2.0
+
+[[mix.routes]]
+signal = "midboss"
+param = "bass_db"
+amount = 6.0
+
+[[mix.routes]]
+signal = "midboss"
+param = "treble_db"
+amount = 5.0
+
+[[mix.routes]]
+signal = "midboss"
+param = "width"
+amount = 0.6
+
+[[mix.routes]]
+signal = "midboss"
+param = "gain_db"
+amount = 2.0
+
+[[mix.routes]]
+signal = "shop"
+param = "lowpass_oct"
+amount = -2.5
+
+[[mix.routes]]
+signal = "shop"
+param = "gain_db"
+amount = -3.0
+
+[[mix.routes]]
+signal = "energy"
+param = "drive"
+amount = 0.21
+
+[[mix.routes]]
+signal = "energy"
+param = "drums_db"
+amount = 40.0
+from = 0.5
+
+[[mix.routes]]
+signal = "energy"
+param = "vocals_db"
+amount = 40.0
+from = 0.15
+to = 0.5
+
+[[mix.routes]]
+signal = "max_energy"
+param = "treble_db"
+amount = 4.0
+
+[[mix.routes]]
+signal = "max_energy"
+param = "width"
+amount = 0.4
+
+[[mix.routes]]
+signal = "max_energy"
+param = "drive"
+amount = 0.15
+
+[[mix.routes]]
+signal = "energy"
+param = "mid_db"
+amount = 1.0
+
+[[mix.routes]]
+signal = "energy"
+param = "lowpass_oct"
+amount = 7.0
+
+[[mix.routes]]
+signal = "energy"
+param = "highpass_oct"
+amount = -7.0
+
+[[text.rules]]
+source = "team"
+match = "(?i)patron"
+positive = true
+signal = "patron_win"
+
+[[text.rules]]
+source = "team"
+match = ""
+positive = true
+signal = "objective_win"
+
+[[text.rules]]
+source = "team"
+match = ""
+positive = false
+signal = "objective_loss"
+
+[[text.rules]]
+source = "toast"
+match = "(?i)mid.?boss|rejuv"
+signal = "midboss"

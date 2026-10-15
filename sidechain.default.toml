@@ -52,6 +52,8 @@ enabled = true
 mode = "dsp"                         # "dsp" = fast CPU approximation (~43 ms) | "neural" = HT-Demucs on the GPU
 neural_hop_s = 2.0                   # neural: separate every N s (music delay ~ N + 1.85 s, GPU busy ~0.43/N)
 neural_model = "models/htdemucs_fwd.onnx"
+fade_in_ms = 1200                    # a stem swells in over this long, however fast energy jumps
+fade_out_ms = 2500                   # ...and dies away over this long
 
 # ---------------------------------------------------------------------------------------------
 # SIGNALS. Pulses (events) jump by `strength` (scaled where noted) and decay; levels follow a state.
