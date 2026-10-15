@@ -15,6 +15,8 @@ struct Svf {
 
 #[derive(Clone, Copy, Default)]
 struct Coef {
+    g: f32,
+    k: f32,
     a1: f32,
     a2: f32,
     a3: f32,
@@ -27,7 +29,19 @@ impl Coef {
     fn new(g: f32, k: f32, m0: f32, m1: f32, m2: f32) -> Self {
         let a1 = 1.0 / (1.0 + g * (g + k));
         let a2 = g * a1;
-        Coef { a1, a2, a3: g * a2, m0, m1, m2 }
+        Coef { g, k, a1, a2, a3: g * a2, m0, m1, m2 }
+    }
+    /// |H| at `f` Hz. The trapezoidal SVF is the bilinear transform of
+    /// m0 + m1*s/D + m2/D with D = s^2 + k s + 1, s = j*tan(pi f/fs)/g — exact, no approximation.
+    fn magnitude(&self, f: f32, fs: f32) -> f32 {
+        let w = (std::f32::consts::PI * f.min(fs * 0.499) / fs).tan() / self.g;
+        // s = jw ; D = (1 - w^2) + j k w
+        let (dr, di) = (1.0 - w * w, self.k * w);
+        let dd = dr * dr + di * di;
+        // s/D = jw (dr - j di)/dd = (w di + j w dr)/dd ; 1/D = (dr - j di)/dd
+        let re = self.m0 + self.m1 * (w * di) / dd + self.m2 * dr / dd;
+        let im = self.m1 * (w * dr) / dd - self.m2 * di / dd;
+        (re * re + im * im).sqrt()
     }
     fn g(fc: f32, fs: f32) -> f32 {
         (std::f32::consts::PI * fc.min(fs * 0.49) / fs).tan()
@@ -70,6 +84,36 @@ impl Svf {
 
 const STAGES: usize = 6; // hp, lp1, lp2, low shelf, bell, high shelf
 
+fn stage_coefs(v: &ParamValues, fs: f32) -> [Coef; STAGES] {
+    let p = |x: Param| v[x.index()];
+    let hp = 20.0 * 2f32.powf(p(Param::HighpassOct));
+    let lp = 20_000.0 * 2f32.powf(p(Param::LowpassOct));
+    let res = p(Param::Resonance);
+    [
+        Coef::highpass(hp, 0.707, fs),
+        // 4th-order Butterworth pair; resonance lifts the second stage's Q
+        Coef::lowpass(lp, 0.5412, fs),
+        Coef::lowpass(lp, 1.3066 * (1.0 + 3.0 * res), fs),
+        Coef::low_shelf(120.0, 0.707, p(Param::BassDb), fs),
+        Coef::bell(1000.0, 0.8, p(Param::MidDb), fs),
+        Coef::high_shelf(6000.0, 0.707, p(Param::TrebleDb), fs),
+    ]
+}
+
+/// Magnitude response (dB) of the linear part of the chain for `params`, at each of `freqs`.
+/// Drive (nonlinear) and the limiter are left out; level is included.
+pub fn response_db(params: &ParamValues, fs: f32, freqs: &[f32]) -> Vec<f32> {
+    let c = stage_coefs(params, fs);
+    let gain_db = params[Param::GainDb.index()];
+    freqs
+        .iter()
+        .map(|&f| {
+            let m: f32 = c.iter().map(|s| s.magnitude(f, fs)).product();
+            20.0 * m.max(1e-9).log10() + gain_db
+        })
+        .collect()
+}
+
 pub struct Chain {
     fs: f32,
     cur: ParamValues,
@@ -109,19 +153,7 @@ impl Chain {
 
     fn update_coefs(&mut self) {
         let p = |x: Param| self.cur[x.index()];
-        let fs = self.fs;
-        let hp = 20.0 * 2f32.powf(p(Param::HighpassOct));
-        let lp = 20_000.0 * 2f32.powf(p(Param::LowpassOct));
-        let res = p(Param::Resonance);
-        self.coefs = [
-            Coef::highpass(hp, 0.707, fs),
-            // 4th-order Butterworth pair; resonance lifts the second stage's Q
-            Coef::lowpass(lp, 0.5412, fs),
-            Coef::lowpass(lp, 1.3066 * (1.0 + 3.0 * res), fs),
-            Coef::low_shelf(120.0, 0.707, p(Param::BassDb), fs),
-            Coef::bell(1000.0, 0.8, p(Param::MidDb), fs),
-            Coef::high_shelf(6000.0, 0.707, p(Param::TrebleDb), fs),
-        ];
+        self.coefs = stage_coefs(&self.cur, self.fs);
         self.gain = 10f32.powf(p(Param::GainDb) / 20.0);
         self.width = p(Param::Width);
         self.drive = p(Param::Drive);

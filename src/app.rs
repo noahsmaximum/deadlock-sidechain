@@ -5,7 +5,7 @@
 use std::collections::HashSet;
 use std::process::Child;
 use std::sync::atomic::Ordering;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
 use wasapi::{DeviceEnumerator, Direction};
@@ -25,6 +25,12 @@ pub struct Router {
     prior_known: bool,
     guardian: Option<Child>,
     explicit_output: bool,
+    sink_name: String,
+    routed_at: Option<Instant>,
+    /// Human-readable routing state for the UI, and whether it's the good state.
+    pub state: String,
+    pub ok: bool,
+    last_logged: String,
 }
 
 pub fn find_render(name_part: &str) -> Result<wasapi::Device> {
@@ -41,9 +47,10 @@ pub fn find_render(name_part: &str) -> Result<wasapi::Device> {
 
 impl Router {
     pub fn new(exe: &str, sink: &str, output: &str, sh: &Shared) -> Result<Self> {
-        let sink_id = find_render(sink)
-            .map_err(|_| anyhow!("sink device {sink:?} not found. Any output you never listen to works (Steam Streaming Speakers, VB-Cable, an unused HDMI out); set [audio] sink in sidechain.toml"))?
-            .get_id()?;
+        let sink_dev = find_render(sink)
+            .map_err(|_| anyhow!("sink device {sink:?} not found. Any output you never listen to works (Steam Streaming Speakers, VB-Cable, an unused HDMI out); set [audio] sink in sidechain.toml"))?;
+        let sink_id = sink_dev.get_id()?;
+        let sink_name = sink_dev.get_friendlyname().unwrap_or_else(|_| sink.to_string());
         if !output.is_empty() {
             let id = find_render(output)?.get_id()?;
             if id == sink_id {
@@ -61,6 +68,11 @@ impl Router {
             prior_known: false,
             guardian: None,
             explicit_output: !output.is_empty(),
+            sink_name,
+            routed_at: None,
+            state: "waiting".into(),
+            ok: false,
+            last_logged: String::new(),
         })
     }
 
@@ -72,6 +84,7 @@ impl Router {
                 sh.capture_pid.store(0, Ordering::Relaxed);
             }
             self.routed.clear();
+            self.set_state(format!("{} not running", self.exe), false);
             return;
         };
         if self.root != Some(root) {
@@ -81,7 +94,7 @@ impl Router {
             self.routed.retain(|p| pids.contains(p));
         }
         let mut newly = 0;
-        for pid in pids {
+        for &pid in &pids {
             if self.routed.contains(&pid) {
                 continue;
             }
@@ -103,10 +116,46 @@ impl Router {
         }
         if newly > 0 {
             crate::log(format!("{}: routed {newly} process(es) to the sink", self.exe));
+            self.routed_at = Some(Instant::now());
             if self.guardian.is_none() {
                 self.guardian = spawn_guardian(&self.exe, self.prior.as_deref());
             }
         }
+        if self.routed.is_empty() {
+            self.set_state(format!("{} found — press play once so it has an audio session", self.exe), false);
+        } else if self.routed_at.is_some_and(|t| t.elapsed() > Duration::from_millis(1500)) {
+            self.verify(&pids);
+        } else {
+            self.set_state("re-pointing to the sink…".into(), true);
+        }
+    }
+
+    /// Where is the app actually playing? Only the sink = good; anywhere else = heard twice.
+    fn verify(&mut self, pids: &HashSet<u32>) {
+        let devs = active_session_devices(pids);
+        let elsewhere: Vec<&String> = devs.iter().filter(|(id, _)| *id != self.sink_id).map(|(_, n)| n).collect();
+        if devs.is_empty() {
+            self.set_state(format!("{} paused (routed to {})", self.exe, self.sink_name), true);
+        } else if elsewhere.is_empty() {
+            self.set_state(format!("{} → {} → Sidechain ✓", self.exe, self.sink_name), true);
+        } else {
+            let names: Vec<&str> = elsewhere.iter().map(|s| s.as_str()).collect();
+            self.set_state(
+                format!("{} is ALSO still playing on {} (you'd hear it twice) — pause/play or restart it", self.exe, names.join(", ")),
+                false,
+            );
+        }
+    }
+
+    fn set_state(&mut self, s: String, ok: bool) {
+        if s != self.last_logged {
+            if !s.starts_with("re-pointing") {
+                crate::log(&s);
+            }
+            self.last_logged = s.clone();
+        }
+        self.state = s;
+        self.ok = ok;
     }
 
     /// Give the app back but stay ready to take it again (game closed). Spotify is untouched
@@ -121,7 +170,9 @@ impl Router {
         self.prior_known = false;
         self.prior = None;
         self.root = None;
+        self.routed_at = None;
         sh.capture_pid.store(0, Ordering::Relaxed);
+        self.set_state("Deadlock not running — Spotify untouched".into(), true);
         if !self.explicit_output {
             sh.output_id.lock().unwrap().clear();
         }
@@ -131,9 +182,6 @@ impl Router {
         !self.routed.is_empty()
     }
 
-    pub fn waiting_for_session(&self) -> bool {
-        self.root.is_some() && self.routed.is_empty()
-    }
 
     /// Put the app back. True if it could be done now (or nothing was ever changed).
     pub fn restore(&mut self) -> bool {
@@ -148,6 +196,27 @@ impl Router {
         }
         ok
     }
+}
+
+/// (device id, name) of every render device holding an *active* session for one of `pids`.
+pub fn active_session_devices(pids: &HashSet<u32>) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let Ok(en) = DeviceEnumerator::new() else { return out };
+    let Ok(coll) = en.get_device_collection(&Direction::Render) else { return out };
+    for i in 0..coll.get_nbr_devices().unwrap_or(0) {
+        let Ok(d) = coll.get_device_at_index(i) else { continue };
+        let Ok(mgr) = d.get_iaudiosessionmanager() else { continue };
+        let Ok(list) = mgr.get_audiosessionenumerator() else { continue };
+        for j in 0..list.get_count().unwrap_or(0) {
+            let Ok(s) = list.get_session(j) else { continue };
+            let active = matches!(s.get_state(), Ok(wasapi::SessionState::Active));
+            if active && s.get_process_id().is_ok_and(|p| pids.contains(&p)) {
+                out.push((d.get_id().unwrap_or_default(), d.get_friendlyname().unwrap_or_default()));
+                break;
+            }
+        }
+    }
+    out
 }
 
 /// Set every instance of `exe` back to `prior`. True if at least one accepted it.

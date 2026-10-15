@@ -9,7 +9,7 @@
     "use strict";
 
     var PREFIX = "[SIDECHAIN]";
-    var VERSION = "0.1.0";
+    var VERSION = "0.1.1";
     var FAST = 0.033;              // seconds between polls of ammo / health / speed / hits
     var SLOW_EVERY = 4;            // the rest every Nth poll (~130 ms)
     var MISSING_RETRY_MS = 1000;   // throttle FindChildTraverse for panels that aren't there yet
@@ -109,15 +109,26 @@
         field("ammom", num(text(ammoMax)));
     }
 
-    var hpCur = null, hpTot = null;
+    // hud_health_container: Label.currentHealthLabel {i:r:current_health} /
+    // Label.totalHealthLabel "/ {i:r:total_health}" (class-only, no ids). Fallback: #health_bar
+    // ProgressBarWithMiddle value/max.
+    var hpCur = null, hpTot = null, hpBar = null, hpLookAt = 0;
     function pollHealth() {
-        if (!valid(hpCur) || !valid(hpTot)) {
-            var box = find("health_and_abilities_container");
-            if (!box) return;
-            try { hpCur = box.FindChildTraverse("current_health"); hpTot = box.FindChildTraverse("total_health"); } catch (e) {}
+        if ((!valid(hpCur) || !valid(hpTot)) && Date.now() - hpLookAt > MISSING_RETRY_MS) {
+            hpLookAt = Date.now();
+            var root = hudRoot();
+            hpCur = byClass(root, "currentHealthLabel")[0] || null;
+            hpTot = byClass(root, "totalHealthLabel")[0] || null;
         }
-        field("hp", num(text(hpCur)));
-        field("hpm", num(text(hpTot)));
+        var cur = num(text(hpCur)), tot = num(text(hpTot));
+        if (cur === null || tot === null) {
+            if (!valid(hpBar)) hpBar = find("health_bar");
+            try {
+                if (valid(hpBar)) { cur = Math.round(Number(hpBar.value)); tot = Math.round(Number(hpBar.max)); }
+            } catch (e) {}
+        }
+        if (cur !== null && isFinite(cur)) field("hp", cur);
+        if (tot !== null && isFinite(tot) && tot > 0) field("hpm", tot);
     }
 
     var speedSetup = false;

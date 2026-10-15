@@ -31,7 +31,7 @@ SCRIPT = """
 # enemy guardian down
 14.00 {"ev":[["txt","team","Enemy Yellow Tier 1","DESTROYED",1]]}
 # sprinting at the top of the speed range
-20.00 {"spd":14.0}
+20.00 {"spd":650.0}
 """
 
 # (label, start, end) windows to measure

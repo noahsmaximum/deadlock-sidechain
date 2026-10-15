@@ -5,7 +5,8 @@
     Install the VPK with Deadlock Mod Manager as a local mod (it handles pak numbering).
 
     Usage:
-        .\build_addon.ps1        # sync + compile + pack (safe while the game is running)
+        .\build_addon.ps1          # sync + compile + pack (safe while the game is running)
+        .\build_addon.ps1 -Deploy  # ...and overwrite every installed copy (Mod Manager profiles). GAME MUST BE CLOSED.
 
     Footguns (from the cinema-cam / boss-rush builds):
       * Compile each source in its OWN resourcecompiler invocation; tight batches silently drop files.
@@ -15,7 +16,9 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$CsdkRoot = "C:\Users\Noah\Projects\Reduced_CSDK_12"
+    [switch]$Deploy,
+    [string]$CsdkRoot = "C:\Users\Noah\Projects\Reduced_CSDK_12",
+    [string]$Addons   = "F:\I Drive\SteamLibrary\steamapps\common\Deadlock\game\citadel\addons"
 )
 
 $ErrorActionPreference = "Stop"
@@ -58,4 +61,20 @@ Start-Sleep -Seconds 6
 if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
 if (-not (Test-Path $vpkOut)) { throw "packer produced no VPK at $vpkOut" }
 Write-Host ("    VPK ok ({0:N0} bytes)" -f (Get-Item $vpkOut).Length) -ForegroundColor Green
-Write-Host "==> add dist\sidechain-hook.vpk in Deadlock Mod Manager as a local mod, enable it, relaunch." -ForegroundColor Yellow
+
+if (-not $Deploy) {
+    Write-Host "==> first install: add dist\sidechain-hook.vpk in Deadlock Mod Manager as a local mod. Updates: -Deploy." -ForegroundColor Yellow
+    return
+}
+if (Get-Process -Name "deadlock" -ErrorAction SilentlyContinue) {
+    throw "Deadlock is running. Close it first: installed VPKs are file-locked while the game is up."
+}
+# Every installed copy = any addon VPK that contains our script (Mod Manager renames/copies them).
+$installed = Get-ChildItem $Addons -Recurse -Filter *.vpk | Where-Object {
+    Select-String -Path $_.FullName -Pattern "sidechain_hook" -SimpleMatch -Quiet
+}
+if (-not $installed) { throw "no installed copy found under $Addons - add dist\sidechain-hook.vpk in Mod Manager first" }
+foreach ($f in $installed) {
+    Copy-Item $vpkOut $f.FullName -Force
+    Write-Host "==> DEPLOYED -> $($f.FullName)" -ForegroundColor Green
+}
