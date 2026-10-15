@@ -997,6 +997,15 @@ impl App {
                     .on_hover_text("Real stem separation on the GPU (DirectML). Clean stems, but the music plays a few seconds behind Spotify (pause/skip lag by that much).");
                 ui.label(RichText::new("GPU, clean, seconds of delay").size(11.0).color(DIM));
             });
+            ui.horizontal(|ui| {
+                ui.label("Fade in");
+                ui.add(egui::DragValue::new(&mut self.draft.stems.fade_in_ms).range(0.0..=10000.0).speed(20.0).suffix(" ms"))
+                    .on_hover_text("How long a stem takes to swell in when energy calls for it");
+                ui.label("Fade out");
+                ui.add(egui::DragValue::new(&mut self.draft.stems.fade_out_ms).range(0.0..=20000.0).speed(20.0).suffix(" ms"))
+                    .on_hover_text("How long a stem takes to die away when energy drops");
+                ui.label(RichText::new("stems fade in even loudness steps across their energy range").size(11.0).color(DIM));
+            });
             if self.draft.stems.mode == StemMode::Neural {
                 ui.horizontal(|ui| {
                     ui.label("Separate every");

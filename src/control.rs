@@ -57,6 +57,8 @@ pub struct Control {
     last_fact: f64,
     /// `max_energy` fires when energy crosses 0.9 and re-arms once it falls below 0.6.
     max_armed: bool,
+    /// Stem gains after the stem fade-in / fade-out smoothing (dB): drums, vocals, music.
+    stem_db: Option<[f32; 3]>,
 }
 
 impl Control {
@@ -84,6 +86,7 @@ impl Control {
             clock: 0.0,
             last_fact: f64::NEG_INFINITY,
             max_armed: true,
+            stem_db: None,
         };
         c.apply_config();
         c
@@ -374,6 +377,15 @@ impl Control {
                 e.value = 0.0;
             }
         }
+        // stems swell in / die away over their own fade times, in dB
+        let raw = self.raw_targets();
+        let want = crate::config::STEM_PARAMS.map(|p| raw[p.index()]);
+        let cur = self.stem_db.get_or_insert(want);
+        for i in 0..3 {
+            let ms = if want[i] > cur[i] { self.cfg.stems.fade_in_ms } else { self.cfg.stems.fade_out_ms };
+            cur[i] = if ms <= 0.0 { want[i] } else { cur[i] + (want[i] - cur[i]) * (1.0 - (-dt * 1000.0 / ms).exp()) };
+        }
+
         let energy = self.signal("energy");
         if self.max_armed && energy >= 0.9 {
             self.max_armed = false;
@@ -404,16 +416,40 @@ impl Control {
         }
     }
 
+    /// Targets with the stems' fades applied (what the audio thread should play).
     pub fn targets(&self) -> ParamValues {
+        let mut v = self.raw_targets();
+        if let Some(s) = self.stem_db {
+            for (i, p) in crate::config::STEM_PARAMS.into_iter().enumerate() {
+                v[p.index()] = s[i];
+            }
+        }
+        v
+    }
+
+    /// Where the routes say every parameter should be right now (stems not yet faded).
+    pub fn raw_targets(&self) -> ParamValues {
         let mut v = self.cfg.base_values();
         let k = self.cfg.master.intensity;
         for r in &self.cfg.mix.routes {
             if self.cfg.signals.get(&r.signal).is_some_and(|s| !s.enabled) {
                 continue;
             }
-            v[r.param.index()] += k * r.amount * r.shape(self.signal(&r.signal));
+            let s = r.shape(self.signal(&r.signal));
+            let i = r.param.index();
+            if r.param.is_stem() {
+                // intensity is applied to stems below, as depth
+                v[i] = stem_fade_db(v[i], r.amount, s);
+            } else {
+                v[i] += k * r.amount * s;
+            }
         }
         v[Param::GainDb.index()] += self.cfg.master.trim_db;
+        // stems: intensity scales how far below full they sit (0 dB stays 0 dB, never above)
+        for p in crate::config::STEM_PARAMS {
+            let i = p.index();
+            v[i] = if v[i] < 0.0 { v[i] * k } else { v[i] };
+        }
         for p in PARAMS {
             v[p.index()] = p.clamp(v[p.index()]);
         }
@@ -443,5 +479,40 @@ impl Control {
             }
         }
         s
+    }
+}
+
+/// Stem routes fade in even steps of perceived loudness, eased at both ends: half-way through its
+/// range a stem fading up from silence sits about 10 dB down (sounds "half as loud"). A dB-linear
+/// ramp would stay inaudible for most of the range and then snap in at the end.
+pub fn stem_fade_db(from_db: f32, amount_db: f32, shape: f32) -> f32 {
+    let s = shape.clamp(0.0, 1.0);
+    let s = s * s * (3.0 - 2.0 * s); // smoothstep: no kink where the range starts / ends
+    // even steps in perceived loudness (~ amplitude^0.6), not in amplitude or dB
+    let s = s.powf(1.0 / 0.6);
+    let a = 10f32.powf(from_db / 20.0);
+    let b = 10f32.powf((from_db + amount_db) / 20.0);
+    20.0 * (a + (b - a) * s).max(1e-6).log10()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::stem_fade_db;
+
+    #[test]
+    fn stems_fade_gradually() {
+        // -40 dB calm, +40 over the route range
+        let at = |s: f32| stem_fade_db(-40.0, 40.0, s);
+        assert!((at(0.0) + 40.0).abs() < 0.01);
+        assert!(at(1.0).abs() < 0.01);
+        assert!((at(0.5) + 10.0).abs() < 0.6, "midpoint {}", at(0.5)); // ~half as loud
+        assert!(at(0.25) > -26.0 && at(0.25) < -14.0, "quarter {}", at(0.25)); // audible, not full
+        assert!(at(0.75) > -5.0, "three quarters {}", at(0.75));
+        let mut prev = f32::MIN;
+        for i in 0..=20 {
+            let v = at(i as f32 / 20.0);
+            assert!(v >= prev);
+            prev = v;
+        }
     }
 }

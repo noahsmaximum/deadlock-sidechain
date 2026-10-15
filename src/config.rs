@@ -154,11 +154,30 @@ pub struct StemsCfg {
     /// Neural: forward-only HT-Demucs ONNX (relative paths are from the config file's folder).
     #[serde(default = "default_model")]
     pub neural_model: String,
+    /// How long a stem takes to swell in / die away, however fast energy moves.
+    #[serde(default = "default_fade_in")]
+    pub fade_in_ms: f32,
+    #[serde(default = "default_fade_out")]
+    pub fade_out_ms: f32,
+}
+
+fn default_fade_in() -> f32 {
+    1200.0
+}
+fn default_fade_out() -> f32 {
+    2500.0
 }
 
 impl Default for StemsCfg {
     fn default() -> Self {
-        StemsCfg { enabled: false, mode: StemMode::Dsp, neural_hop_s: default_hop(), neural_model: default_model() }
+        StemsCfg {
+            enabled: false,
+            mode: StemMode::Dsp,
+            neural_hop_s: default_hop(),
+            neural_model: default_model(),
+            fade_in_ms: default_fade_in(),
+            fade_out_ms: default_fade_out(),
+        }
     }
 }
 
