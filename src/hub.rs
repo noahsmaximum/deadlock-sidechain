@@ -59,6 +59,7 @@ pub struct Snapshot {
     pub neural_ready: bool,
     pub neural_ms: u32,
     pub neural_misses: u64,
+    pub neural_coverage: u32,
     pub neural_device: String,
     pub neural_error: String,
 }
@@ -102,6 +103,7 @@ impl Default for Snapshot {
             neural_ready: false,
             neural_ms: 0,
             neural_misses: 0,
+            neural_coverage: 0,
             neural_device: String::new(),
             neural_error: String::new(),
         }

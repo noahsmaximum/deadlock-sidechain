@@ -238,6 +238,8 @@ pub struct NeuralStatus {
     pub misses: AtomicU64,
     pub device: Mutex<String>,
     pub error: Mutex<String>,
+    /// % of the audio in the last ~5 s that the neural separator actually covered (rest: Fast).
+    pub coverage: AtomicU32,
 }
 
 struct Job {
@@ -278,6 +280,16 @@ pub struct NeuralStems {
     pub levels_db: [f32; 3],
     lvl_acc: [f32; 3],
     lvl_n: usize,
+    /// Fast (DSP) stems run alongside; whatever the separator misses plays from here instead of
+    /// unseparated. dsp_q[k] = Fast output for input index dsp_base + k.
+    fast: crate::stems::Stems,
+    fast_buf: Vec<f32>,
+    fast_pos: u64,
+    dsp_q: VecDeque<[f32; 2]>,
+    dsp_base: u64,
+    cov_have: u32,
+    cov_n: u32,
+    lvl_have: usize,
 }
 
 /// Seconds of future context every kept sample has.
@@ -290,8 +302,8 @@ impl NeuralStems {
         RIGHT_S + hop_s + XFADE_S + 0.6
     }
 
-    pub fn new(model: &Path, hop_s: f32, blocking: bool, status: Arc<NeuralStatus>) -> Self {
-        let hop = (hop_s.clamp(0.5, 5.0) * SR as f32) as usize;
+    pub fn new(model: &Path, hop_s: f32, blocking: bool, gpu: bool, status: Arc<NeuralStatus>) -> Self {
+        let hop = (hop_s.clamp(0.5, 8.0) * SR as f32) as usize;
         let right = (RIGHT_S * SR as f32) as usize;
         let xf = (XFADE_S * SR as f32) as usize;
         let delay = (Self::latency_s(hop as f32 / SR as f32) * SR as f32) as usize;
@@ -301,7 +313,7 @@ impl NeuralStems {
         let model = model.to_path_buf();
         std::thread::Builder::new()
             .name("neural".into())
-            .spawn(move || worker(model, jrx, dtx, st, !blocking))
+            .spawn(move || worker(model, jrx, dtx, st, !blocking, gpu))
             .expect("spawn neural");
         status.ready.store(false, Ordering::Relaxed);
         NeuralStems {
@@ -327,6 +339,14 @@ impl NeuralStems {
             levels_db: [-90.0; 3],
             lvl_acc: [0.0; 3],
             lvl_n: 0,
+            fast: crate::stems::Stems::new(SR as f32),
+            fast_buf: Vec::new(),
+            fast_pos: 0,
+            dsp_q: VecDeque::with_capacity(delay + 8192),
+            dsp_base: 0,
+            cov_have: 0,
+            cov_n: 0,
+            lvl_have: 0,
         }
     }
 
@@ -335,6 +355,10 @@ impl NeuralStems {
             let r = if wait && self.pending > 0 { self.done.recv().ok() } else { self.done.try_recv().ok() };
             let Some(d) = r else { return };
             self.pending = self.pending.saturating_sub(1);
+            // test hook: pretend every other separation arrived too late
+            if std::env::var("SIDECHAIN_TEST_DROP").is_ok() && (d.end / self.hop as u64) % 2 == 1 {
+                continue;
+            }
             self.accumulate(d);
             if wait {
                 return;
@@ -384,6 +408,16 @@ impl NeuralStems {
         // stems: drums, bass, other, vocals  <-  drums, music, music, vocals
         let want = [g[0], g[2], g[2], g[1]];
         self.take_results(false);
+        // Fast stems on the same input (its output lags by its own frame, crate::stems::N)
+        self.fast_buf.clear();
+        self.fast_buf.extend_from_slice(buf);
+        self.fast.process(&mut self.fast_buf, target_db);
+        for f in self.fast_buf.chunks_exact(2) {
+            if self.fast_pos >= crate::stems::N as u64 {
+                self.dsp_q.push_back([f[0], f[1]]);
+            }
+            self.fast_pos += 1;
+        }
         for fr in buf.chunks_exact_mut(2) {
             let x = [fr[0], fr[1]];
             // input side
@@ -431,30 +465,64 @@ impl NeuralStems {
                 self.store.pop_front();
                 self.store_base += 1;
             }
-            let have = o == self.store_base && self.store.front().is_some_and(|a| a.w > 0.5);
-            if have {
+            while self.dsp_base < o && !self.dsp_q.is_empty() {
+                self.dsp_q.pop_front();
+                self.dsp_base += 1;
+            }
+            let fast = if self.dsp_base == o { self.dsp_q.front().copied() } else { None };
+            // neural where the separator delivered; where its slices are missing (or only partly
+            // there at a crossfade edge) blend toward the Fast stems by the slice weight
+            let w = if o == self.store_base { self.store.front().map_or(0.0, |a| a.w) } else { 0.0 };
+            let have = w > 0.5;
+            if w > 1e-3 {
                 let a = self.store.front().unwrap();
                 let inv = 1.0 / a.w;
+                let mut ny = y;
                 for c in 0..2 {
                     for s in 0..4 {
-                        y[c] += (self.gains[s] - 1.0) * a.s[s][c] * inv;
+                        ny[c] += (self.gains[s] - 1.0) * a.s[s][c] * inv;
                     }
                 }
                 let e = |s: usize| (a.s[s][0] * inv).powi(2) + (a.s[s][1] * inv).powi(2);
                 self.lvl_acc[0] += e(0);
                 self.lvl_acc[1] += e(3);
                 self.lvl_acc[2] += e(1) + e(2);
-            } else if o >= self.delay as u64 * 2 {
+                self.lvl_have += 1;
+                let k = w.min(1.0);
+                let f = fast.unwrap_or(ny);
+                y = [k * ny[0] + (1.0 - k) * f[0], k * ny[1] + (1.0 - k) * f[1]];
+            } else {
+                // separator didn't make it in time: play the Fast stems for this sample
+                if let Some(f) = fast {
+                    y = f;
+                }
+            }
+            if !have && o >= self.delay as u64 {
                 self.status.misses.fetch_add(1, Ordering::Relaxed);
+            }
+            self.cov_n += 1;
+            if have {
+                self.cov_have += 1;
+            }
+            if self.cov_n >= 5 * SR as u32 {
+                self.status.coverage.store(self.cov_have * 100 / self.cov_n, Ordering::Relaxed);
+                self.cov_have = 0;
+                self.cov_n = 0;
             }
             self.lvl_n += 1;
             if self.lvl_n >= 2048 {
                 for i in 0..3 {
-                    let db = 10.0 * (self.lvl_acc[i] / self.lvl_n as f32 + 1e-12).log10();
+                    // separated stretch: neural stem energy; gap: what the Fast stems measured
+                    let db = if self.lvl_have > 0 {
+                        10.0 * (self.lvl_acc[i] / self.lvl_have as f32 + 1e-12).log10()
+                    } else {
+                        self.fast.levels_db[i]
+                    };
                     self.levels_db[i] += (db - self.levels_db[i]) * 0.3;
                     self.lvl_acc[i] = 0.0;
                 }
                 self.lvl_n = 0;
+                self.lvl_have = 0;
             }
             if self.fade > 0 {
                 let k = self.fade as f32 / (SR / 50) as f32;
@@ -472,8 +540,8 @@ impl NeuralStems {
     }
 }
 
-fn worker(model: std::path::PathBuf, jobs: Receiver<Job>, done: Sender<Done>, st: Arc<NeuralStatus>, skip: bool) {
-    let mut d = match Demucs::load(&model, true, 2) {
+fn worker(model: std::path::PathBuf, jobs: Receiver<Job>, done: Sender<Done>, st: Arc<NeuralStatus>, skip: bool, gpu: bool) {
+    let mut d = match Demucs::load(&model, gpu, 4) {
         Ok(d) => d,
         Err(e) => {
             *st.error.lock().unwrap() = format!("{e:#}");

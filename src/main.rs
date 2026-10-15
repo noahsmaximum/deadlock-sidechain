@@ -385,7 +385,8 @@ fn render_offline(input: &str, output: &str, script: &str, cfg: Config, trace: O
             bail!("neural stems need a {} Hz file", neural::SR);
         }
         let status = std::sync::Arc::new(neural::NeuralStatus::default());
-        Some(Off::Neural(neural::NeuralStems::new(std::path::Path::new(&ctl.cfg.stems.neural_model), ctl.cfg.stems.neural_hop_s, true, status)))
+        let gpu = ctl.cfg.stems.neural_device != "cpu";
+        Some(Off::Neural(neural::NeuralStems::new(std::path::Path::new(&ctl.cfg.stems.neural_model), ctl.cfg.stems.neural_hop_s, true, gpu, status)))
     } else {
         Some(Off::Dsp(stems::Stems::new(w.rate as f32)))
     };

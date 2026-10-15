@@ -191,6 +191,8 @@ pub fn run(hub: Arc<Hub>, rx: Receiver<Cmd>, cfg: Config, opts: Opts) -> Result<
     let mut next_slow = Instant::now();
     let mut next_status = Instant::now();
     let mut next_snap = Instant::now();
+    let trace = std::env::var("SIDECHAIN_TRACE").is_ok();
+    let mut next_trace = Instant::now();
     while !STOP.load(Ordering::Relaxed) {
         let now = Instant::now();
         if opts.for_secs.is_some_and(|s| started.elapsed().as_secs_f32() > s) {
@@ -363,11 +365,29 @@ pub fn run(hub: Arc<Hub>, rx: Receiver<Cmd>, cfg: Config, opts: Opts) -> Result<
             s.neural_ready = sh.neural.ready.load(Ordering::Relaxed);
             s.neural_ms = sh.neural.infer_ms.load(Ordering::Relaxed);
             s.neural_misses = sh.neural.misses.load(Ordering::Relaxed);
+            s.neural_coverage = sh.neural.coverage.load(Ordering::Relaxed);
             s.neural_device = sh.neural.device.lock().unwrap().clone();
             s.neural_error = sh.neural.error.lock().unwrap().clone();
             s.stem_levels = [0, 1, 2].map(|i| f32::from_bits(sh.stem_levels[i].load(Ordering::Relaxed)));
         }
 
+        // ---- SIDECHAIN_TRACE=1: energy + stem gains twice a second (debugging stems)
+        if trace && now >= next_trace {
+            next_trace = now + Duration::from_millis(500);
+            use crate::config::Param;
+            log(format!(
+                "trace energy {:.2} | drums {:+.1} vocals {:+.1} music {:+.1} dB | raw drums {:+.1} vocals {:+.1} | neural misses {} infer {} ms coverage {}%",
+                ctl.signal("energy"),
+                t[Param::DrumsDb.index()],
+                t[Param::VocalsDb.index()],
+                t[Param::MusicDb.index()],
+                ctl.raw_targets()[Param::DrumsDb.index()],
+                ctl.raw_targets()[Param::VocalsDb.index()],
+                sh.neural.misses.load(Ordering::Relaxed),
+                sh.neural.infer_ms.load(Ordering::Relaxed),
+                sh.neural.coverage.load(Ordering::Relaxed),
+            ));
+        }
         // ---- console status line
         if show_status && now >= next_status {
             next_status = now + Duration::from_millis(100);
@@ -405,7 +425,8 @@ fn set_stems(sh: &Shared, c: &Config, cfg_path: &Path) {
         log(format!("neural stems: model not found at {} — using DSP stems", model.display()));
     }
     *sh.neural_model.lock().unwrap() = model.clone();
-    sh.neural_hop_ms.store((c.stems.neural_hop_s.clamp(0.5, 5.0) * 1000.0) as u32, Ordering::Relaxed);
+    sh.neural_hop_ms.store((c.stems.neural_hop_s.clamp(0.5, 8.0) * 1000.0) as u32, Ordering::Relaxed);
+    sh.neural_gpu.store(c.stems.neural_device != "cpu", Ordering::Relaxed);
     sh.stems_neural.store(neural && model.exists(), Ordering::Relaxed);
     sh.stems_enabled.store(c.stems.enabled, Ordering::Relaxed);
 }

@@ -754,7 +754,10 @@ impl App {
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new("signal").size(11.0).color(DIM));
                                 meter(ui, (lvl + 60.0) / 60.0, vec2(110.0, 5.0), Color32::from_gray(150));
-                            });
+                                ui.label(RichText::new(format!("{:.0} dB", lvl.max(-90.0))).monospace().size(11.0).color(DIM));
+                            })
+                            .response
+                            .on_hover_text("How loud this stem actually is in the music right now (before your level)");
                         }
                     }
                 });
@@ -1008,8 +1011,15 @@ impl App {
             });
             if self.draft.stems.mode == StemMode::Neural {
                 ui.horizontal(|ui| {
+                    ui.label("Run on");
+                    ui.radio_value(&mut self.draft.stems.neural_device, "gpu".to_string(), "GPU")
+                        .on_hover_text("DirectML. ~0.45 s per separation when idle, but a GPU-heavy game can slow it 10x");
+                    ui.radio_value(&mut self.draft.stems.neural_device, "cpu".to_string(), "CPU")
+                        .on_hover_text("4 threads, ~3 s per separation; doesn't compete with the game for the GPU. Use a 4 s interval.");
+                });
+                ui.horizontal(|ui| {
                     ui.label("Separate every");
-                    ui.add(egui::Slider::new(&mut self.draft.stems.neural_hop_s, 1.0..=4.0).suffix(" s").fixed_decimals(1));
+                    ui.add(egui::Slider::new(&mut self.draft.stems.neural_hop_s, 1.0..=8.0).suffix(" s").fixed_decimals(1));
                     let hop = self.draft.stems.neural_hop_s;
                     let ms = if snap.neural_ms > 0 { snap.neural_ms as f32 } else { 430.0 };
                     ui.label(
@@ -1026,11 +1036,32 @@ impl App {
                     let (ok, txt) = if !snap.neural_error.is_empty() {
                         (Some(false), format!("error: {}", snap.neural_error))
                     } else if snap.neural_ready {
-                        (Some(true), format!("running on {} · {} ms per separation · {} late samples", snap.neural_device, snap.neural_ms, snap.neural_misses))
+                        let behind = snap.neural_ms as f32 > self.draft.stems.neural_hop_s * 1000.0 * 0.9;
+                        let cov = snap.neural_coverage;
+                        (
+                            Some(!behind && cov >= 95),
+                            format!(
+                                "{} · {:.2} s per separation · neural covered {cov}% of the last 5 s{}",
+                                snap.neural_device,
+                                snap.neural_ms as f32 / 1000.0,
+                                if cov < 100 { " (the rest used Fast)" } else { "" }
+                            ),
+                        )
                     } else {
                         (None, "loading model…".to_string())
                     };
                     ui.horizontal(|ui| pill(ui, ok, &txt));
+                    if snap.neural_ready && snap.neural_ms as f32 > self.draft.stems.neural_hop_s * 1000.0 * 0.9 {
+                        ui.colored_label(
+                            BAD,
+                            format!(
+                                "Can't keep up: each separation takes {:.1} s but you asked for one every {:.1} s (the game is probably using the GPU). Raise \"Separate every\" to at least {:.0} s, or switch to CPU.",
+                                snap.neural_ms as f32 / 1000.0,
+                                self.draft.stems.neural_hop_s,
+                                (snap.neural_ms as f32 / 1000.0 * 1.3).ceil()
+                            ),
+                        );
+                    }
                 } else if snap.stems {
                     ui.colored_label(BAD, format!("model not found ({}) — using Fast", self.draft.stems.neural_model));
                 }
