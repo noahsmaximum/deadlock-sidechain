@@ -129,7 +129,7 @@ fn real_main() -> Result<()> {
         for a in &args {
             if skip {
                 skip = false;
-            } else if a == "--config" || a == "--for" {
+            } else if a == "--config" || a == "--for" || a == "--prio" || a == "--hop" || a == "--model" || a == "--trace" {
                 skip = true;
             } else if !a.starts_with("--") {
                 v.push(a.as_str());
@@ -158,6 +158,26 @@ fn real_main() -> Result<()> {
             pos.get(2).copied().unwrap_or("capture.wav"),
             pos.get(3).copied().unwrap_or("Spotify.exe"),
         ),
+        Some("neural-bench") => neural::bench(
+            &neural::prefer_fp16(std::path::Path::new(opt("--model").unwrap_or("models/htdemucs_fwd.onnx"))),
+            pos.get(1).copied().unwrap_or("ab/original.wav"),
+            pos.get(2).and_then(|s| s.parse().ok()).unwrap_or(5),
+        ),
+        Some("neural-stream") => {
+            let db = |i: usize| pos.get(3 + i).and_then(|s| s.parse().ok()).unwrap_or(0.0);
+            neural::stream_test(
+                pos.get(1).copied().unwrap_or("ab/original.wav"),
+                pos.get(2).copied().unwrap_or("stream.wav"),
+                [db(0), db(1), db(2)],
+                flag("--realtime"),
+                match opt("--prio") {
+                    Some("high") => config::GpuPriority::High,
+                    Some("auto") => config::GpuPriority::Auto,
+                    _ => config::GpuPriority::Normal,
+                },
+                opt("--hop").and_then(|s| s.parse().ok()).unwrap_or(2.0),
+            )
+        }
         Some("neural-sum") => neural::check_sum(std::path::Path::new("models/htdemucs_fwd.onnx"), pos[1]),
         Some("neural-check") => neural::check(
             std::path::Path::new(pos.get(1).copied().unwrap_or("models/htdemucs_fp16weights.onnx")),
@@ -385,8 +405,8 @@ fn render_offline(input: &str, output: &str, script: &str, cfg: Config, trace: O
             bail!("neural stems need a {} Hz file", neural::SR);
         }
         let status = std::sync::Arc::new(neural::NeuralStatus::default());
-        let gpu = ctl.cfg.stems.neural_device != "cpu";
-        Some(Off::Neural(neural::NeuralStems::new(std::path::Path::new(&ctl.cfg.stems.neural_model), ctl.cfg.stems.neural_hop_s, true, gpu, status)))
+        let model = neural::prefer_fp16(std::path::Path::new(&ctl.cfg.stems.neural_model));
+        Some(Off::Neural(neural::NeuralStems::new(&model, ctl.cfg.stems.neural_hop_s, true, config::GpuPriority::Normal, status)))
     } else {
         Some(Off::Dsp(stems::Stems::new(w.rate as f32)))
     };

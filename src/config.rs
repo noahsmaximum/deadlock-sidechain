@@ -154,10 +154,14 @@ pub struct StemsCfg {
     /// Neural: forward-only HT-Demucs ONNX (relative paths are from the config file's folder).
     #[serde(default = "default_model")]
     pub neural_model: String,
-    /// "gpu" (DirectML; slows down a lot while a GPU-heavy game runs) or "cpu" (4 threads, needs a
-    /// longer interval but doesn't fight the game for the GPU).
-    #[serde(default = "default_device")]
-    pub neural_device: String,
+    /// Neural: Sidechain's GPU scheduling priority. "normal" never cuts ahead of the game (smoothest
+    /// frames; a busy GPU slows separation down), "high" always does (fast separations, a short
+    /// frame hitch each time), "auto" stays normal and raises it only while separations run late.
+    #[serde(default)]
+    pub neural_priority: GpuPriority,
+    /// Old setting (the neural separator is GPU-only now); read and ignored.
+    #[serde(default, skip_serializing)]
+    pub neural_device: Option<String>,
     /// How long a stem takes to swell in / die away, however fast energy moves.
     #[serde(default = "default_fade_in")]
     pub fade_in_ms: f32,
@@ -165,9 +169,6 @@ pub struct StemsCfg {
     pub fade_out_ms: f32,
 }
 
-fn default_device() -> String {
-    "gpu".into()
-}
 fn default_fade_in() -> f32 {
     1200.0
 }
@@ -182,11 +183,21 @@ impl Default for StemsCfg {
             mode: StemMode::Dsp,
             neural_hop_s: default_hop(),
             neural_model: default_model(),
-            neural_device: default_device(),
+            neural_priority: GpuPriority::Auto,
+            neural_device: None,
             fade_in_ms: default_fade_in(),
             fade_out_ms: default_fade_out(),
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GpuPriority {
+    Normal,
+    #[default]
+    Auto,
+    High,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]

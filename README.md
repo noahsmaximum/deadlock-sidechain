@@ -65,15 +65,24 @@ Spotify ──(re-pointed to a silent sink)──> process loopback ──> EQ /
   warns if it's still on the old device too.
 - **Neural stems (optional).** HT-Demucs v4 runs on the GPU through ONNX Runtime + DirectML,
   using the MIT-licensed forward-only export
-  [webnn/stem-separator](https://huggingface.co/webnn/stem-separator). The spectrogram front and back
-  end is reimplemented in Rust; `sidechain neural-check` verifies it against the full-graph export
-  (51–80 dB SNR). Every *hop* (default 2 s) the last 7.8 s are separated, and the slice with 1 s of
-  future context is kept, crossfaded. The music therefore plays ~3.8 s behind Spotify: game
-  reactions stay instant, but pause and skip lag by that much (a pause fades the queued audio out
-  immediately). Costs ~0.45 s of GPU per separation, so ~24 % busy at a 2 s hop; adjustable on the
-  Energy tab. DirectML's graph fusion has to be off, because fused it miscomputes this model.
+  [webnn/stem-separator](https://huggingface.co/webnn/stem-separator), converted to half precision
+  (4x faster, matches full precision at 45–52 dB SNR). The spectrogram front and back end is
+  reimplemented in Rust; `sidechain neural-check` verifies it against the full-graph export. Every
+  *hop* (default 2 s) the last 7.8 s are separated (~0.11 s on an idle 4070). Each sample plays as
+  the weighted blend of every separated window that covers it, weighted by how much context it had
+  there, so overlapping windows average the way demucs' own overlap-add does. A separation that
+  runs late doesn't switch anything: the newest samples just get less look-ahead. The music plays
+  ~3.85 s behind Spotify: game reactions stay instant, but pause and skip lag by that much (a pause
+  fades the queued audio out immediately). It is GPU-only; there is no fallback to the Fast stems.
+  **GPU priority:** a busy game slows separations down (3–6x in tests) without being slowed itself.
+  *Auto* (the default) stays at normal priority and raises Sidechain's GPU scheduling priority only
+  while separations run so late that look-ahead would suffer. It checks every 30 s whether that's
+  still needed. *High* always cuts ahead (~0.12 s per separation however busy the GPU is, with a
+  short frame hitch each time); *Normal* never does. DirectML's graph fusion has to be off: fused,
+  it miscomputes this model.
   Setup: put `htdemucs_fwd.onnx` + `htdemucs_fwd.onnx.data` from that repo's `onnx/` folder into
-  `models/`.
+  `models/`, then run `python tools/convert_fp16.py` (needs `pip install onnx onnxconverter-common`)
+  to make `models/htdemucs_fwd_fp16.onnx`, which is picked up automatically.
 - **Stems (Fast).** These are real-time approximations on the CPU, not a neural model, so your GPU stays
   free for the game. An STFT (2048 / 512) splits each frame three ways. **Drums** are the
   percussive part of a causal harmonic/percussive split (a median over past frames vs a median
@@ -94,6 +103,9 @@ sidechain devices        list outputs; mark default and sink
 sidechain restore        point Spotify back at the default output
 sidechain capture <secs> <out.wav>   record what Sidechain hears from Spotify (for offline tuning)
 sidechain neural-check   verify the neural front/back end against the full-graph HT-Demucs export
+sidechain neural-bench [wav] [runs]   time a GPU separation per stage, compare with the CPU result
+sidechain neural-stream <in.wav> <out.wav> [drums vocals music dB] [--realtime] [--prio auto|normal|high]
+                         run the streaming separator over a file (offline, or paced like the live engine)
 sidechain scan <log> [--late]   replay a saved console.log on its timestamps: events, energy + stems over time
 sidechain render <in.wav> <out.wav> <script> [--trace t.csv]   offline timeline render
 ```
@@ -116,6 +128,7 @@ Console keys (console focused): `b` bypass · `w` open window · `v` status line
 | Stems: exact pass-through; separation on synthetic parts; energy arc (calm −28/−30 dB → sprint vocals in → fight all in) | **verified** (unit tests + `tools/stems_check.py`) |
 | Stems on real music | Fast: bleed as expected. Neural: clean, and solos sum back to the mix (+0.2 dB) on a real clip; A/B files in `ab/` |
 | Neural stems: GPU, bit-exact passthrough at unity, live load + separation timing | **verified** (offline + headless live run); not yet in a real match |
+| Neural stems v2 (fp16, multi-window blend, GPU priority): exact at unity; real-time output = offline render (45–47 dB SNR) idle and under a synthetic game load (1–3 GPU stress instances): 0 unseparated samples | **verified** with `neural-stream --realtime` + `gpuload`; **not yet in a real match** |
 
 ## Troubleshooting
 

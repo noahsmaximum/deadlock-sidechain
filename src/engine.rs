@@ -421,12 +421,13 @@ fn set_stems(sh: &Shared, c: &Config, cfg_path: &Path) {
         let beside_exe = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join(&model))).filter(|p| p.exists());
         model = beside_cfg.or(beside_exe).unwrap_or(model);
     }
+    let model = crate::neural::prefer_fp16(&model);
     if neural && !model.exists() {
         log(format!("neural stems: model not found at {} — using DSP stems", model.display()));
     }
     *sh.neural_model.lock().unwrap() = model.clone();
-    sh.neural_hop_ms.store((c.stems.neural_hop_s.clamp(0.5, 8.0) * 1000.0) as u32, Ordering::Relaxed);
-    sh.neural_gpu.store(c.stems.neural_device != "cpu", Ordering::Relaxed);
+    sh.neural_hop_ms.store((c.stems.neural_hop_s.clamp(0.5, 6.0) * 1000.0) as u32, Ordering::Relaxed);
+    *sh.neural_priority.lock().unwrap() = c.stems.neural_priority;
     sh.stems_neural.store(neural && model.exists(), Ordering::Relaxed);
     sh.stems_enabled.store(c.stems.enabled, Ordering::Relaxed);
 }

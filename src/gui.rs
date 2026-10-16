@@ -998,7 +998,11 @@ impl App {
                 ui.add_space(16.0);
                 ui.radio_value(&mut self.draft.stems.mode, StemMode::Neural, "Neural (HT-Demucs)")
                     .on_hover_text("Real stem separation on the GPU (DirectML). Clean stems, but the music plays a few seconds behind Spotify (pause/skip lag by that much).");
-                ui.label(RichText::new("GPU, clean, seconds of delay").size(11.0).color(DIM));
+                ui.label(
+                    RichText::new(format!("GPU, clean, ~{:.1} s delay", crate::neural::NeuralStems::latency_s(self.draft.stems.neural_hop_s)))
+                        .size(11.0)
+                        .color(DIM),
+                );
             });
             ui.horizontal(|ui| {
                 ui.label("Fade in");
@@ -1011,17 +1015,10 @@ impl App {
             });
             if self.draft.stems.mode == StemMode::Neural {
                 ui.horizontal(|ui| {
-                    ui.label("Run on");
-                    ui.radio_value(&mut self.draft.stems.neural_device, "gpu".to_string(), "GPU")
-                        .on_hover_text("DirectML. ~0.45 s per separation when idle, but a GPU-heavy game can slow it 10x");
-                    ui.radio_value(&mut self.draft.stems.neural_device, "cpu".to_string(), "CPU")
-                        .on_hover_text("4 threads, ~3 s per separation; doesn't compete with the game for the GPU. Use a 4 s interval.");
-                });
-                ui.horizontal(|ui| {
                     ui.label("Separate every");
-                    ui.add(egui::Slider::new(&mut self.draft.stems.neural_hop_s, 1.0..=8.0).suffix(" s").fixed_decimals(1));
+                    ui.add(egui::Slider::new(&mut self.draft.stems.neural_hop_s, 1.0..=6.0).suffix(" s").fixed_decimals(1));
                     let hop = self.draft.stems.neural_hop_s;
-                    let ms = if snap.neural_ms > 0 { snap.neural_ms as f32 } else { 430.0 };
+                    let ms = if snap.neural_ms > 0 { snap.neural_ms as f32 } else { 150.0 };
                     ui.label(
                         RichText::new(format!(
                             "music delay ~{:.1} s · GPU busy ~{:.0}% of the time",
@@ -1032,33 +1029,50 @@ impl App {
                         .color(DIM),
                     );
                 });
+                ui.horizontal(|ui| {
+                    use crate::config::GpuPriority;
+                    ui.label("GPU priority");
+                    let p = &mut self.draft.stems.neural_priority;
+                    ui.radio_value(p, GpuPriority::Auto, "Auto").on_hover_text(
+                        "Normal priority; cuts ahead of the game only while separations start running late, and checks every 30 s whether it still needs to",
+                    );
+                    ui.radio_value(p, GpuPriority::Normal, "Normal")
+                        .on_hover_text("Never cuts ahead of the game: smoothest frames, but a busy GPU makes each separation slower");
+                    ui.radio_value(p, GpuPriority::High, "High").on_hover_text(
+                        "Always cuts ahead: ~0.15 s per separation however busy the game is, at the cost of a short frame hitch each time",
+                    );
+                });
                 if snap.stems_neural {
+                    let behind = snap.neural_ready && snap.neural_ms as f32 > self.draft.stems.neural_hop_s * 1000.0 * 0.9;
                     let (ok, txt) = if !snap.neural_error.is_empty() {
                         (Some(false), format!("error: {}", snap.neural_error))
                     } else if snap.neural_ready {
-                        let behind = snap.neural_ms as f32 > self.draft.stems.neural_hop_s * 1000.0 * 0.9;
                         let cov = snap.neural_coverage;
                         (
-                            Some(!behind && cov >= 95),
+                            Some(!behind && cov >= 90),
                             format!(
-                                "{} · {:.2} s per separation · neural covered {cov}% of the last 5 s{}",
+                                "{} · {} · {cov}% of the last 5 s had full look-ahead{}",
                                 snap.neural_device,
-                                snap.neural_ms as f32 / 1000.0,
-                                if cov < 100 { " (the rest used Fast)" } else { "" }
+                                if snap.neural_ms == 0 { "waiting for music".to_string() } else { format!("{:.2} s per separation", snap.neural_ms as f32 / 1000.0) },
+                                if snap.neural_misses > 0 { format!(" · {:.1} s unseparated so far", snap.neural_misses as f32 / 44_100.0) } else { String::new() }
                             ),
                         )
                     } else {
                         (None, "loading model…".to_string())
                     };
                     ui.horizontal(|ui| pill(ui, ok, &txt));
-                    if snap.neural_ready && snap.neural_ms as f32 > self.draft.stems.neural_hop_s * 1000.0 * 0.9 {
+                    if behind {
                         ui.colored_label(
                             BAD,
                             format!(
-                                "Can't keep up: each separation takes {:.1} s but you asked for one every {:.1} s (the game is probably using the GPU). Raise \"Separate every\" to at least {:.0} s, or switch to CPU.",
+                                "Can't keep up: each separation takes {:.1} s but you asked for one every {:.1} s. {}",
                                 snap.neural_ms as f32 / 1000.0,
                                 self.draft.stems.neural_hop_s,
-                                (snap.neural_ms as f32 / 1000.0 * 1.3).ceil()
+                                if self.draft.stems.neural_priority == crate::config::GpuPriority::High {
+                                    format!("Raise \"Separate every\" to at least {:.0} s.", (snap.neural_ms as f32 / 1000.0 * 1.3).ceil())
+                                } else {
+                                    "Set GPU priority to High.".to_string()
+                                }
                             ),
                         );
                     }
