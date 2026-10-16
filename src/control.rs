@@ -58,7 +58,7 @@ pub struct Control {
     /// `max_energy` fires when energy crosses 0.9 and re-arms once it falls below 0.6.
     max_armed: bool,
     /// Stem gains after the stem fade-in / fade-out smoothing (dB): drums, vocals, music.
-    stem_db: Option<[f32; 3]>,
+    stem_db: Option<[f32; 4]>,
 }
 
 impl Control {
@@ -381,7 +381,7 @@ impl Control {
         let raw = self.raw_targets();
         let want = crate::config::STEM_PARAMS.map(|p| raw[p.index()]);
         let cur = self.stem_db.get_or_insert(want);
-        for i in 0..3 {
+        for i in 0..want.len() {
             let ms = if want[i] > cur[i] { self.cfg.stems.fade_in_ms } else { self.cfg.stems.fade_out_ms };
             cur[i] = if ms <= 0.0 { want[i] } else { cur[i] + (want[i] - cur[i]) * (1.0 - (-dt * 1000.0 / ms).exp()) };
         }

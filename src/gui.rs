@@ -723,10 +723,10 @@ impl App {
                 .into_iter()
                 .chain(
                     snap.stems
-                        .then(|| STEM_PARAMS.map(|p| (p.name(), format!("{:+.0} dB", g(p)))))
+                        .then(|| STEM_PARAMS.map(|p| (p.stem_title(), format!("{:+.0} dB", g(p)))))
                         .into_iter()
                         .flatten()
-                        .map(|(n, v)| (match n { "drums" => "Drums", "vocals" => "Vocals", _ => "Music" }, v)),
+                        .filter(|(n, _)| *n != "Bass" || snap.stems_neural),
                 ) {
                     // plain labels (sized before layout) so the row wraps; frames can't
                     let chip = RichText::new(format!(" {label} {val} ")).size(12.0).monospace().background_color(Color32::from_rgb(32, 35, 42));
@@ -737,13 +737,15 @@ impl App {
         ui.add_space(8.0);
         if snap.stems {
             card(ui, "Stems", |ui| {
-                ui.columns(3, |cols| {
-                    for (i, p) in STEM_PARAMS.into_iter().enumerate() {
+                // bass is its own stem only with the neural separator
+                let n = if snap.stems_neural { STEM_PARAMS.len() } else { 3 };
+                ui.columns(n, |cols| {
+                    for (i, p) in STEM_PARAMS.into_iter().take(n).enumerate() {
                         let gain = snap.targets[p.index()];
                         let lvl = snap.stem_levels[i];
                         let ui = &mut cols[i];
                         {
-                            let name = ["DRUMS", "VOCALS", "MUSIC"][i];
+                            let name = p.stem_title().to_uppercase();
                             let on = gain > -20.0;
                             ui.label(RichText::new(name).strong().color(if on { ACCENT } else { DIM }));
                             ui.horizontal(|ui| {
@@ -1086,19 +1088,22 @@ impl App {
                     ui.label(RichText::new(h).size(11.0).color(DIM));
                 }
                 ui.end_row();
+                let neural = self.draft.stems.mode == StemMode::Neural;
                 for p in STEM_PARAMS {
-                    let name = match p {
-                        Param::DrumsDb => "Drums",
-                        Param::VocalsDb => "Vocals",
-                        _ => "Music",
-                    };
-                    ui.label(RichText::new(name).strong());
+                    // the Fast stems have no bass stem (their music keeps the bass)
+                    let live = neural || p != Param::BassStemDb;
+                    if live {
+                        ui.label(RichText::new(p.stem_title()).strong());
+                    } else {
+                        ui.label(RichText::new("Bass").strong().color(DIM))
+                            .on_hover_text("Neural only: the Fast stems can't pull the bass out of the music");
+                    }
                     let mut calm = *self.draft.base.get(&p).unwrap_or(&0.0);
-                    let changed = ui.add(egui::Slider::new(&mut calm, -40.0..=0.0).suffix(" dB").fixed_decimals(0)).changed();
+                    let changed = ui.add_enabled(live, egui::Slider::new(&mut calm, -40.0..=0.0).suffix(" dB").fixed_decimals(0)).changed();
                     let idx = self.draft.mix.routes.iter().position(|r| r.signal == "energy" && r.param == p);
                     let (mut from, mut to) = idx.map_or((0.0, 1.0), |i| (self.draft.mix.routes[i].from, self.draft.mix.routes[i].to));
-                    let f = ui.add_enabled(calm < -0.5, egui::Slider::new(&mut from, 0.0..=1.0).custom_formatter(|v, _| format!("{:.0}% energy", v * 100.0)));
-                    let t = ui.add_enabled(calm < -0.5, egui::Slider::new(&mut to, 0.0..=1.0).custom_formatter(|v, _| format!("{:.0}% energy", v * 100.0)));
+                    let f = ui.add_enabled(live && calm < -0.5, egui::Slider::new(&mut from, 0.0..=1.0).custom_formatter(|v, _| format!("{:.0}% energy", v * 100.0)));
+                    let t = ui.add_enabled(live && calm < -0.5, egui::Slider::new(&mut to, 0.0..=1.0).custom_formatter(|v, _| format!("{:.0}% energy", v * 100.0)));
                     ui.end_row();
                     if changed || f.changed() || t.changed() {
                         if calm.abs() < 0.5 {

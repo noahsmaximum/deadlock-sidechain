@@ -37,6 +37,7 @@ trim_db = 0.0
 #   drums_db      drums stem level   (needs [stems] enabled)
 #   vocals_db     vocals stem level
 #   music_db      everything-else stem level
+#   bass_stem_db  bass stem level (neural stems only; the Fast stems keep the bass in music)
 [base]
 gain_db = -6.0
 width = 0.25
@@ -44,6 +45,7 @@ bass_db = -10.0
 highpass_oct = 1.5
 drums_db = -30.0
 vocals_db = -30.0
+bass_stem_db = -30.0
 
 # Real-time approximate stems (CPU, ~43 ms): drums = percussive part, vocals = centred harmonic
 # part in the vocal band, music = the rest. Calm keeps drums + vocals out; energy brings them in.
@@ -127,6 +129,8 @@ routes = [
   # (from / to = the slice of the signal over which a route ramps from nothing to full)
   { signal = "energy",         param = "vocals_db",    amount = 30.0, from = 0.15, to = 0.55 },
   { signal = "energy",         param = "drums_db",     amount = 30.0, from = 0.55, to = 0.95 },
+  # the bassline (neural stems only) comes back between the two
+  { signal = "energy",         param = "bass_stem_db", amount = 30.0, from = 0.30, to = 0.70 },
   # guns punch through: every shot pumps the low end + level like a sidechain compressor
   { signal = "fire",           param = "bass_db",      amount = -6.0 },
   { signal = "fire",           param = "gain_db",      amount = -3.0 },
