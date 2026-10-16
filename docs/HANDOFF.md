@@ -1,6 +1,6 @@
-# Sidechain — handoff (2026-10-16)
+# Sidechain — handoff (2026-10-16, after the neural optimization pass)
 
-State at `e3b1a32`, local git only (no remote). Next up: **optimizations**.
+Local git only (no remote). The neural pass is done (see *Neural v2* below). Next up: **the user checks it in a real match**, then the remaining optimizations.
 
 ## What it is
 Deadlock gameplay drives Spotify. A Panorama hook reads the HUD and prints `[SIDECHAIN]{json}` to
@@ -19,7 +19,9 @@ the real output. There's an egui settings window with a tray icon. The user tune
 | `src/engine.rs` | engine thread: lines → control → `Shared.targets`, router, config apply/hot-reload, demo, snapshot (33 ms), `SIDECHAIN_TRACE` |
 | `src/audio.rs` | capture (process loopback) → ring → `Resampler` (cubic + PI drift) → `StemProc` (Dsp / Neural) → `dsp::Chain` → render. **RATE = 44.1 kHz** |
 | `src/stems.rs` | Fast stems: STFT 2048/512, causal HPSS + centre coherence, ~43 ms |
-| `src/neural.rs` | HT-Demucs forward-only ONNX via `ort` rc.14 + DirectML; own torch-exact STFT/iSTFT; streaming (hop, 1 s right context, crossfade, Fast fallback for late slices, coverage) |
+| `src/neural.rs` | HT-Demucs forward-only ONNX (fp16 copy preferred) via `ort` rc.14 + DirectML; own torch-exact STFT/iSTFT (threaded); streaming = per-sample weighted blend of every window covering it; GPU priority policy (D3DKMT); `neural-bench` / `neural-stream` test commands |
+| `src/bin/gpuload.rs` | stand-in for a game's GPU load (off-screen uncapped shader, prints fps + worst frame): `gpuload 3000 <secs>` ≈ 139 fps, 100 % GPU |
+| `tools/convert_fp16.py` | makes `models/htdemucs_fwd_fp16.onnx` |
 | `src/dsp.rs` | SVF chain + `response_db` for the GUI curve |
 | `src/gui.rs` | egui window (Live / Energy / Signals / Routes / Text rules / Audio / Log), tray, off-screen screenshot env vars |
 | `src/app.rs`, `routing.rs` | per-app output override (AudioPolicyConfig), verification, guardian process |
@@ -32,25 +34,36 @@ the real output. There's an egui settings window with a tray icon. The user tune
 - Real match (95 min): energy mean ~0.5; hook lines ~17/s.
 - Release exe is 32 MB (ort is statically linked).
 
+## Neural v2 (2026-10-16): what was measured and decided
+The user wanted neural only (no switching to Fast, which sounded like a quality shift every few seconds), GPU only, faster and lighter.
+- **fp16** (`tools/convert_fp16.py`, keep_io_types): network 365 → 85 ms on an idle 4070, 45–52 dB SNR vs fp32. The whole
+  separation (spec + net + ispec, threaded) went from 415 → ~110 ms.
+- **DirectML knobs don't matter:** graph fusion is no faster and still wrong (fp32: +90 dB garbage, fp16: NaN). Metacommands
+  off, graph capture, and performance preference made no difference.
+- **Contention** (`gpuload`, 139 fps game stand-in): normal priority 415 → 1330 ms fp32 / 425 ms fp16, and the game is
+  unaffected. Process GPU priority REALTIME (`D3DKMTSetProcessSchedulingPriorityClass(…, 5)`, works without admin; 3 and 4 do
+  nothing) makes it ~115 ms under load, but costs the game a ~45–55 ms frame per separation. Raising it during warm-up
+  (kernel compile) caused a 290 ms hitch, so priority is only raised after a warm-up run.
+- **Policy:** `neural_priority = auto` stays normal and raises only after 2 separations over MARGIN+250 ms (1.1 s). Once raised,
+  it tries normal again every 30 s. Also `normal` and `high`.
+- **Streaming:** latency = RIGHT 1.0 + hop + MARGIN 0.85 (3.85 s at hop 2, same as before). The output sample is
+  `mix + Σ(g−1)·stem`, where stem = Σ wₖ·stemₖ / Σ wₖ over arrived windows (weight = smoothstep(left ctx / 0.5 s) ·
+  smoothstep(right ctx / 1 s) + 1e-4, plus a 4096-sample fade-in per newly arrived window). A late window costs look-ahead,
+  not a switch. A sample with no window at all plays unseparated, with a short de-click; that only happens if separations
+  take longer than ~hop + margin. Silent windows skip the GPU. Buffers are recycled.
+- **Results** (`neural-stream --realtime`, 48 s clip): idle / 1 / 2 / 3 load instances → 0 unseparated samples; full
+  look-ahead 100 / 100 / 100 / 92 %; real-time vs offline render 45–47 dB SNR; unity exact.
+- **Not verified:** a real Deadlock match. Deadlock's contention may be worse than `gpuload`'s (fp32 was 4.3–5.5 s in-game
+  vs 1.3 s under gpuload). Ask the user for the Log tab lines (`separations running late … raised`) and the stems status pill.
+- Config: `neural_device` is now ignored (read, never written). The CPU option was removed on purpose.
+
 ## Optimization candidates (roughly by payoff)
-1. **Neural GPU cost in-game.** This is the real blocker. Options:
-   - True fp16 compute on DirectML: convert the graph to fp16, or use an fp16 IO-bound session. That
-     should roughly halve GPU time.
-   - IoBinding: keep inputs and outputs on the GPU, and skip the ~13.7 M-float output copy plus the
-     `to_vec` per run.
-   - Skip separation when it can't matter: all stem targets ≈ 0 dB (full energy), or the stems are
-     held at calm and their gains are unchanged. Also, the time and frequency branches are both always
-     computed.
-   - Adaptive hop: pick the interval from measured inference time instead of the user's guess.
-   - DirectML queue priority and `PerformancePreference::MinimumPower`. Or the CPU EP at
-     below-normal priority (the CPU option exists; measure it in-game).
-   - A lighter model (e.g. a 2-stem vocals/accompaniment MDX model plus Fast drums).
-2. **Neural CPU-side work per job:** the spec/ispec run 2 + 8 FFT passes single-threaded, plus
-   `Vec` allocations of 2×W, 4×FR×T and 8×W per job. Parallelize (8 independent iSTFTs), preallocate
-   and reuse buffers, cache the FFT planners (already cached) and the window.
+1. **Neural, still open:** IoBinding (keep the ~55 MB of in/out tensors on the GPU); skipping separation when stems are
+   all at 0 dB for a while; adaptive hop from measured time; a dedicated high-priority D3D12 compute queue via
+   `SessionOptionsAppendExecutionProvider_DML1` (maybe gentler on the game than process-wide REALTIME); a lighter model.
+2. **Neural CPU side:** spec/ispec are now threaded (≈15 + 17 ms). Remaining: the 44 MB `x_out` read and some per-job Vecs.
 3. **Fast stems (`stems.rs`):** the per-bin `select_nth_unstable` time and frequency medians at 94
-   frames/s × 1025 bins. Could use a running/sliding median, lower the time history, or use SIMD. In
-   neural mode it now *always* runs too, as the fallback.
+   frames/s × 1025 bins. Could use a running/sliding median, lower the time history, or use SIMD. (It no longer runs in neural mode.)
 4. **Render thread:** `Vec<u8>` / `Vec<f32>` conversions per callback (reused, but there's a byte
    copy); the `Chain` recomputes `tan`/`powf` coefficients every 16 frames.
 5. **Capture:** VecDeque<u8> → flat Vec copy each packet.

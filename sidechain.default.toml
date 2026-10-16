@@ -50,8 +50,9 @@ vocals_db = -30.0
 [stems]
 enabled = true
 mode = "dsp"                         # "dsp" = fast CPU approximation (~43 ms) | "neural" = HT-Demucs on the GPU
-neural_hop_s = 2.0                   # neural: separate every N s (music delay ~ N + 1.85 s, GPU busy ~0.43/N)
-neural_model = "models/htdemucs_fwd.onnx"
+neural_hop_s = 2.0                   # neural: separate every N s (music delay ~ N + 1.85 s)
+neural_model = "models/htdemucs_fwd.onnx"   # a models/htdemucs_fwd_fp16.onnx next to it is used instead (4x faster)
+neural_priority = "auto"             # GPU priority: "auto" (raise only while separations run late) | "normal" | "high"
 fade_in_ms = 1200                    # a stem swells in over this long, however fast energy jumps
 fade_out_ms = 2500                   # ...and dies away over this long
 

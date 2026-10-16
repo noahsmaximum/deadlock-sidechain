@@ -12,13 +12,15 @@ use wasapi::{AudioClient, DeviceEnumerator, Direction, SampleType, StreamMode, W
 
 use crate::config::{PARAMS, ParamValues, STEM_PARAMS};
 use crate::dsp::Chain;
+use crate::config::GpuPriority;
 use crate::neural::NeuralStems;
 use crate::stems::Stems;
 
 /// The stems stage: fast DSP approximation or neural (HT-Demucs) separation.
 pub enum StemProc {
     Dsp(Stems),
-    Neural(NeuralStems, u32, bool),
+    /// separator, hop ms, GPU priority mode
+    Neural(NeuralStems, u32, GpuPriority),
 }
 
 impl StemProc {
@@ -60,7 +62,7 @@ pub struct Shared {
     pub stems_enabled: AtomicBool,
     pub stems_neural: AtomicBool,
     pub neural_hop_ms: AtomicU32,
-    pub neural_gpu: AtomicBool,
+    pub neural_priority: Mutex<GpuPriority>,
     pub neural_model: Mutex<std::path::PathBuf>,
     pub neural: Arc<crate::neural::NeuralStatus>,
     /// Current added latency of the stems stage, ms.
@@ -91,7 +93,7 @@ impl Shared {
             stems_enabled: AtomicBool::new(false),
             stems_neural: AtomicBool::new(false),
             neural_hop_ms: AtomicU32::new(2000),
-            neural_gpu: AtomicBool::new(true),
+            neural_priority: Mutex::new(GpuPriority::Auto),
             neural_model: Mutex::new(std::path::PathBuf::new()),
             neural: Arc::new(crate::neural::NeuralStatus::default()),
             stems_latency_ms: AtomicU32::new(0),
@@ -325,7 +327,7 @@ fn render(sh: &Shared, chain: &mut Chain, rs: &mut Resampler, stems: &mut Option
         chain.bypass = sh.bypass.load(Ordering::Relaxed);
         let want_neural = sh.stems_neural.load(Ordering::Relaxed);
         let hop_ms = sh.neural_hop_ms.load(Ordering::Relaxed);
-        let gpu = sh.neural_gpu.load(Ordering::Relaxed);
+        let prio = *sh.neural_priority.lock().unwrap();
         let rebuild = match (sh.stems_enabled.load(Ordering::Relaxed), stems.as_ref()) {
             (false, Some(_)) => {
                 *stems = None;
@@ -334,7 +336,7 @@ fn render(sh: &Shared, chain: &mut Chain, rs: &mut Resampler, stems: &mut Option
             }
             (true, None) => true,
             (true, Some(StemProc::Dsp(_))) => want_neural,
-            (true, Some(StemProc::Neural(_, h, g))) => !want_neural || *h != hop_ms || *g != gpu,
+            (true, Some(StemProc::Neural(_, h, p))) => !want_neural || *h != hop_ms || *p != prio,
             (false, None) => false,
         };
         if rebuild {
@@ -343,7 +345,7 @@ fn render(sh: &Shared, chain: &mut Chain, rs: &mut Resampler, stems: &mut Option
                 let hop = hop_ms as f32 / 1000.0;
                 sh.neural.misses.store(0, Ordering::Relaxed);
                 sh.neural.coverage.store(0, Ordering::Relaxed);
-                *stems = Some(StemProc::Neural(NeuralStems::new(&model, hop, false, gpu, sh.neural.clone()), hop_ms, gpu));
+                *stems = Some(StemProc::Neural(NeuralStems::new(&model, hop, false, prio, sh.neural.clone()), hop_ms, prio));
                 sh.stems_latency_ms.store((NeuralStems::latency_s(hop) * 1000.0) as u32, Ordering::Relaxed);
             } else {
                 *stems = Some(StemProc::Dsp(Stems::new(RATE as f32)));
