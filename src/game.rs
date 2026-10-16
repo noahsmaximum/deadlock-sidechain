@@ -26,6 +26,12 @@ pub struct HookLine {
     pub ammom: Option<f32>,
     pub spd: Option<f32>,
     pub dead: Option<u8>,
+    /// 1 while the HUD shows a teammate (we're dead and spectating): hp / ammo / abilities aren't ours
+    pub spec: Option<u8>,
+    /// our kill count, from our own top-bar slot
+    pub k: Option<f32>,
+    /// our hero's ability names, "a|b|c|d"
+    pub abn: Option<String>,
     pub shop: Option<u8>,
     pub sb: Option<u8>,
     pub combat: Option<u8>,
