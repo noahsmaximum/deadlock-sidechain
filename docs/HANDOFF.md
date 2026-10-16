@@ -57,6 +57,16 @@ The user wanted neural only (no switching to Fast, which sounded like a quality 
   vs 1.3 s under gpuload). Ask the user for the Log tab lines (`separations running late … raised`) and the stems status pill.
 - Config: `neural_device` is now ignored (read, never written). The CPU option was removed on purpose.
 
+## Bass stem (2026-10-16, ddb9a96)
+- Neural-only fourth stem `bass_stem_db` (Param::BassStemDb, short name "bassline", title "Bass"). STEM_PARAMS is now
+  [drums, vocals, music, bass]; music = demucs "other" in neural mode. Fast mode ignores bass (`[db[0..3]]`, level -90) and
+  the GUI greys out its row and hides its strip.
+- Defaults: base -30, energy route 30-70 %. The user's sidechain.toml got base -40 + route 0.3-0.7 (their style).
+- Verified: build, tests, and the bass-removed render: removed = 99 % < 250 Hz, centroid 73 Hz, kick kept. Unity at 0 dB is
+  structurally unchanged but wasn't re-run (the user was in Deadlock). GUI not screenshotted for the same reason.
+- First real-Deadlock data point: fp16 offline separations took 0.3-1.3 s each at normal priority while the game ran
+  (fp32 was 4.3-5.5 s).
+
 ## Optimization candidates (roughly by payoff)
 1. **Neural, still open:** IoBinding (keep the ~55 MB of in/out tensors on the GPU); skipping separation when stems are
    all at 0 dB for a while; adaptive hop from measured time; a dedicated high-priority D3D12 compute queue via

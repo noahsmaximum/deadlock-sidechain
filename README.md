@@ -1,7 +1,7 @@
 # Sidechain
 
 Deadlock gameplay drives your Spotify. With nothing going on, the track sits back: near-mono,
-quieter, no bass, with the **drums and vocals stripped out**. As more happens at once (moving fast,
+quieter, no bass, with the **drums, vocals and bassline stripped out**. As more happens at once (moving fast,
 fighting, shooting, landing hits, kills), **energy** builds. The vocals come back in through the
 middle of the range, the drums near the top, and the track opens up to full level, wide stereo,
 normal bass and a little extra air. On top of that, individual events have their own moves: shots pump the low end like a
@@ -74,6 +74,9 @@ Spotify ──(re-pointed to a silent sink)──> process loopback ──> EQ /
   runs late doesn't switch anything: the newest samples just get less look-ahead. The music plays
   ~3.85 s behind Spotify: game reactions stay instant, but pause and skip lag by that much (a pause
   fades the queued audio out immediately). It is GPU-only; there is no fallback to the Fast stems.
+  Neural mode adds a fourth stem, **Bass** (the bassline: bass guitar, 808, synth bass), which HT-Demucs
+  separates anyway. Unlike the Bass EQ it leaves the kick drum alone. By default it's out at calm and
+  comes back over 30–70 % energy. The Fast stems have no bass stem; their music keeps the bass.
   **GPU priority:** a busy game slows separations down (3–6x in tests) without being slowed itself.
   *Auto* (the default) stays at normal priority and raises Sidechain's GPU scheduling priority only
   while separations run so late that look-ahead would suffer. It checks every 30 s whether that's
