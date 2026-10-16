@@ -9,7 +9,7 @@
     "use strict";
 
     var PREFIX = "[SIDECHAIN]";
-    var VERSION = "0.1.2";
+    var VERSION = "0.1.3";
     var FAST = 0.033;              // seconds between polls of ammo / health / speed / hits
     var SLOW_EVERY = 4;            // the rest every Nth poll (~130 ms)
     var MISSING_RETRY_MS = 1000;   // throttle FindChildTraverse for panels that aren't there yet
@@ -188,15 +188,46 @@
 
     // ---------------------------------------------------------------- slow fields
 
+    // Our slot in the top bar. The game reuses these panels for other players (e.g. hideout ->
+    // match), so a cached slot is only ours while it still carries .LocalPlayer: re-check every time.
     var localPlayer = null;
     function findLocalPlayer() {
-        if (valid(localPlayer)) return localPlayer;
+        if (valid(localPlayer) && has(localPlayer, "LocalPlayer")) return localPlayer;
         localPlayer = null;
         var ps = byClass(ctx, "LocalPlayer");
         for (var i = 0; i < ps.length; i++) {
             if (ps[i].paneltype === "CitadelHudTopBarPlayer") { localPlayer = ps[i]; break; }
         }
         return localPlayer;
+    }
+
+    // While dead the HUD follows a teammate (.SpectatorTarget on their slot): health, ammo,
+    // abilities and hit markers then belong to them, not us.
+    function spectating(player) {
+        var ps = byClass(ctx, "SpectatorTarget");
+        for (var i = 0; i < ps.length; i++) {
+            if (ps[i].paneltype === "CitadelHudTopBarPlayer" && ps[i] !== player) return 1;
+        }
+        return 0;
+    }
+
+    // Our kill count from our own slot (.KillsLabel): authoritative, unlike hit-impact panels.
+    function ourKills(player) {
+        var l = byClass(player, "KillsLabel")[0];
+        return l ? num(text(l)) : null;
+    }
+
+    // Our hero's ability names (for tools that gate on the hero), only while it's really ours.
+    function abilityNames() {
+        var rootAb = find("hud_signature");
+        if (!rootAb) return null;
+        var names = [];
+        var ps = byClass(rootAb, "ability_container");
+        for (var i = 0; i < ps.length; i++) {
+            var n = byClass(ps[i], "ability_name");
+            names.push(n.length ? text(n[0]) || "" : "");
+        }
+        return names.length ? names.join("|") : null;
     }
 
     // Kill-streak popup in our own top-bar slot: its first Label child is the running count.
@@ -296,8 +327,15 @@
     function pollSlow() {
         var root = hudRoot();
         var player = findLocalPlayer();
-        field("dead", player ? (has(player, "Dead") ? 1 : 0) : null);
-        if (player) pollKillStreak(player);
+        var dead = player ? (has(player, "Dead") ? 1 : 0) : null;
+        var spec = player ? spectating(player) : 0;
+        field("dead", dead);
+        field("spec", spec);
+        if (player) {
+            pollKillStreak(player);
+            field("k", ourKills(player));
+            if (!dead && !spec) field("abn", abilityNames());
+        }
         field("shop", has(ctx, "gShopOpen") ? 1 : 0);
         field("sb", has(ctx, "gScoreboardOpen") ? 1 : 0);
         var tm = find("ToastManager");
@@ -346,7 +384,7 @@
             if (tick % 150 === 0) field("hb", Math.floor(tick / 150) % 2); // ~5s heartbeat flip
             if (tick % 90 === 45) {
                 // keyframe: forget the slow fields so the next slow poll re-sends them (~3 s)
-                ["live", "dead", "hpm", "ammom", "shop", "sb", "combat", "mb"].forEach(function (k) { delete last[k]; });
+                ["live", "dead", "spec", "k", "abn", "hpm", "ammom", "shop", "sb", "combat", "mb"].forEach(function (k) { delete last[k]; });
             }
         } catch (e) {
             out.err = String(e);

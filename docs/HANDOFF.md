@@ -67,6 +67,23 @@ The user wanted neural only (no switching to Fast, which sounded like a quality 
 - First real-Deadlock data point: fp16 offline separations took 0.3-1.3 s each at normal priority while the game ran
   (fp32 was 4.3-5.5 s).
 
+## Hook v0.1.3: wrong deaths / kills fixed (2026-10-16)
+From the user's real log (hideout, then 2 matches; copy in session scratchpad kd/):
+- The cached `.LocalPlayer` slot was reused for another player once the match started, so `dead` followed an enemy
+  (it flipped in the same second as our kills and never when our HP hit 0).
+- While dead, the HUD spectates a teammate, so their HP / ammo / hits read as ours.
+
+Fixes:
+- The hook re-checks `.LocalPlayer` on every read, and reports `spec` (another slot has `.SpectatorTarget`), `k` (our
+  `.KillsLabel`) and `abn` (ability names, only while alive and not spectating).
+- The engine ignores hp / ammo / speed / hit / ability input while dead or spectating, and re-baselines on transitions.
+- Kills come from `k` increments once known; impact kills and the ks fallback remain for older hooks. Unit tests in
+  control.rs.
+- Venator Verses (`Projects\deadlock-venator-verses`, no git, backup `.bak-YYYYMMDD`) now reads `[SIDECHAIN]` lines too.
+
+**NOT verified in a match yet:** the `.KillsLabel` text is assumed to be the kill count. Check `k` in the next log
+(`sidechain scan`, or grep `"k":`).
+
 ## Optimization candidates (roughly by payoff)
 1. **Neural, still open:** IoBinding (keep the ~55 MB of in/out tensors on the GPU); skipping separation when stems are
    all at 0 dB for a while; adaptive hop from measured time; a dedicated high-priority D3D12 compute queue via

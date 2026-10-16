@@ -34,9 +34,15 @@ pub struct Control {
     pub ammom: Option<f32>,
     pub spd: Option<f32>,
     pub dead: bool,
+    /// The HUD is showing a teammate (we're dead, spectating): hp / ammo / hits aren't ours.
+    pub spec: bool,
+    /// Our kill count from our own top-bar slot (hook >= 0.1.3). When known it is the kill source.
+    pub kills: Option<f32>,
+    /// Our hero's ability names as last reported (only sent while the HUD is really ours).
+    pub kit: String,
     pub live: bool,
-    // kill bookkeeping: impact "kill" is authoritative, kill-streak "ks" is a fallback that an
-    // assist vetoes (the streak popup also pops for assists)
+    // kill bookkeeping without a kill count (older hooks): impact "kill" is authoritative,
+    // kill-streak "ks" is a fallback that an assist vetoes (the streak popup also pops for assists)
     t_kill: Option<f64>,
     t_assist: Option<f64>,
     pending_ks: Vec<f64>,
@@ -73,6 +79,9 @@ impl Control {
             ammom: None,
             spd: None,
             dead: false,
+            spec: false,
+            kills: None,
+            kit: String::new(),
             live: false,
             t_kill: None,
             t_assist: None,
@@ -177,45 +186,10 @@ impl Control {
                         e.peak = 0.0;
                     }
                     self.facts.clear();
+                    self.kills = None;
+                    self.dead = false;
+                    self.spec = false;
                 }
-            }
-        }
-        if let Some(m) = l.hpm {
-            self.hpm = Some(m);
-        }
-        if let Some(hp) = l.hp {
-            if let (Some(prev), Some(max)) = (self.hp, self.hpm.filter(|m| *m > 0.0)) {
-                let d = (hp - prev) / max;
-                if d < 0.0 && !self.dead {
-                    let sc = self.cfg.signals.get("damage").map_or(1.0, |s| s.scale);
-                    self.pulse("damage", -d * sc);
-                } else if d > 0.0 && prev > 0.0 {
-                    let sc = self.cfg.signals.get("heal").map_or(1.0, |s| s.scale);
-                    self.pulse("heal", d * sc);
-                }
-            }
-            self.hp = Some(hp);
-        }
-        if let Some(m) = l.ammom {
-            self.ammom = Some(m);
-        }
-        if let Some(a) = l.ammo {
-            if let Some(prev) = self.ammo {
-                if a < prev {
-                    self.pulse("fire", prev - a);
-                } else if a > prev + 0.5 {
-                    self.pulse("reload", 1.0);
-                }
-            }
-            self.ammo = Some(a);
-        }
-        if let Some(s) = l.spd {
-            self.spd = Some(s);
-            if s > 0.5 {
-                self.spd_range = Some(match self.spd_range {
-                    Some((lo, hi)) => (lo.min(s), hi.max(s)),
-                    None => (s, s),
-                });
             }
         }
         if let Some(d) = l.dead {
@@ -229,6 +203,76 @@ impl Control {
                     self.pulse("respawn", 1.0);
                 }
                 self.dead = d;
+                self.rebaseline();
+            }
+        }
+        if let Some(sp) = l.spec {
+            let sp = sp != 0;
+            if sp != self.spec {
+                if sp {
+                    self.note("spectating a teammate (their hp / ammo ignored)");
+                }
+                self.spec = sp;
+                self.rebaseline();
+            }
+        }
+        // while dead / spectating the HUD's hp, ammo, speed, abilities and hits are someone else's
+        let away = self.dead || self.spec;
+        if let Some(k) = l.k {
+            if let Some(prev) = self.kills {
+                let n = (k - prev).round();
+                if n >= 1.0 && n <= 5.0 {
+                    for _ in 0..n as usize {
+                        self.note("kill");
+                        self.t_kill = Some(self.clock);
+                        self.pulse("kill", 1.0);
+                    }
+                }
+            }
+            self.kills = Some(k);
+        }
+        if let Some(kit) = l.abn.as_ref().filter(|k| **k != self.kit) {
+            self.note(format!("hero kit: {}", kit.replace('|', ", ")));
+            self.kit = kit.clone();
+        }
+        if let Some(m) = l.hpm {
+            if !away {
+                self.hpm = Some(m);
+            }
+        }
+        if let Some(hp) = l.hp.filter(|_| !away) {
+            if let (Some(prev), Some(max)) = (self.hp, self.hpm.filter(|m| *m > 0.0)) {
+                let d = (hp - prev) / max;
+                if d < 0.0 && !self.dead {
+                    let sc = self.cfg.signals.get("damage").map_or(1.0, |s| s.scale);
+                    self.pulse("damage", -d * sc);
+                } else if d > 0.0 && prev > 0.0 {
+                    let sc = self.cfg.signals.get("heal").map_or(1.0, |s| s.scale);
+                    self.pulse("heal", d * sc);
+                }
+            }
+            self.hp = Some(hp);
+        }
+        if let Some(m) = l.ammom.filter(|_| !away) {
+            self.ammom = Some(m);
+        }
+        if let Some(a) = l.ammo.filter(|_| !away) {
+            if let Some(prev) = self.ammo {
+                if a < prev {
+                    self.pulse("fire", prev - a);
+                } else if a > prev + 0.5 {
+                    self.pulse("reload", 1.0);
+                }
+            }
+            self.ammo = Some(a);
+        }
+        if let Some(s) = l.spd.filter(|_| !away) {
+            self.spd = Some(s);
+            if s > 0.5 {
+                self.spd_range = Some(match self.spd_range {
+                    Some((lo, hi)) => (lo.min(s), hi.max(s)),
+                    None => (s, s),
+                });
             }
         }
         for (key, v) in [("shop", l.shop), ("scoreboard", l.sb), ("combat", l.combat)] {
@@ -242,14 +286,28 @@ impl Control {
             }
         }
         for ev in l.events() {
+            // hits, impacts and ability uses on a spectated teammate's HUD aren't ours
+            let ours = matches!(ev, HookEvent::Txt { .. } | HookEvent::Engine(_));
+            if away && !ours {
+                continue;
+            }
             self.event(ev);
         }
+    }
+
+    /// After death / respawn / spectating changes, the next hp / ammo reading starts fresh (the
+    /// HUD switches between our numbers and a teammate's: no fake reload / heal / damage).
+    fn rebaseline(&mut self) {
+        self.hp = None;
+        self.ammo = None;
     }
 
     fn event(&mut self, ev: HookEvent) {
         let now = self.clock;
         match ev {
             HookEvent::Simple(name) => match name.as_str() {
+                // with a kill count from our slot (hook >= 0.1.3) that is the only kill source
+                "kill" if self.kills.is_some() => {}
                 "kill" => {
                     self.note("kill");
                     self.t_kill = Some(now);
@@ -260,6 +318,7 @@ impl Control {
                     self.t_assist = Some(now);
                     self.pulse("assist", 1.0);
                 }
+                "ks" if self.kills.is_some() => {}
                 "ks" => self.pending_ks.push(now),
                 "hit" => self.pulse("hit", 1.0),
                 "crit" => self.pulse("crit", 1.0),
@@ -497,7 +556,76 @@ pub fn stem_fade_db(from_db: f32, amount_db: f32, shape: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::stem_fade_db;
+    use super::{Control, stem_fade_db};
+    use crate::game::HookLine;
+
+    fn feed(c: &mut Control, json: &str) {
+        let l: HookLine = serde_json::from_str(json).unwrap();
+        c.hook(&l);
+        c.tick(0.033);
+    }
+    fn n(c: &Control, sig: &str) -> u32 {
+        c.counts.get(sig).copied().unwrap_or(0)
+    }
+
+    /// The pattern from a real match: we die, the HUD spectates a teammate (their hp / ammo /
+    /// hits show up), we respawn. Only one death, no fake fire / reload / heal / damage / kills.
+    #[test]
+    fn spectating_a_teammate_is_not_us() {
+        let mut c = Control::new(crate::config::Config::default_config());
+        feed(&mut c, r#"{"live":1,"dead":0,"spec":0,"k":2,"hp":700,"hpm":700,"ammo":15,"ammom":15}"#);
+        feed(&mut c, r#"{"ammo":14}"#);
+        assert_eq!(n(&c, "fire"), 1);
+        feed(&mut c, r#"{"hp":0,"dead":1}"#);
+        assert_eq!(n(&c, "death"), 1);
+        let before: Vec<_> = ["fire", "reload", "heal", "damage", "kill", "hit", "ability"].iter().map(|s| n(&c, s)).collect();
+        // 4 s later the HUD shows a teammate: their numbers move
+        feed(&mut c, r#"{"spec":1,"hp":850,"hpm":850,"ammo":24,"ammom":24}"#);
+        feed(&mut c, r#"{"ammo":20,"hp":600,"ev":["hit","kill","dmgout",["ab",2,"X"]]}"#);
+        feed(&mut c, r#"{"ammo":24,"hp":850}"#);
+        // respawn: our numbers come back
+        feed(&mut c, r#"{"dead":0,"spec":0,"hp":700,"hpm":700,"ammo":15,"ammom":15}"#);
+        let after: Vec<_> = ["fire", "reload", "heal", "damage", "kill", "hit", "ability"].iter().map(|s| n(&c, s)).collect();
+        assert_eq!(before, after, "fire/reload/heal/damage/kill/hit/ability while spectating");
+        assert_eq!(n(&c, "death"), 1);
+        assert_eq!(n(&c, "respawn"), 1);
+        // alive again: our own shots count
+        feed(&mut c, r#"{"ammo":13}"#);
+        assert_eq!(n(&c, "fire"), 2);
+    }
+
+    /// With a kill count from our own slot, kills come only from it (impact panels and the streak
+    /// popup also light up for fights that weren't our kill).
+    #[test]
+    fn kill_count_is_the_kill_source() {
+        let mut c = Control::new(crate::config::Config::default_config());
+        feed(&mut c, r#"{"live":1,"dead":0,"spec":0,"k":0}"#);
+        feed(&mut c, r#"{"ev":["kill","ks"]}"#);
+        for _ in 0..30 {
+            c.tick(0.033);
+        }
+        assert_eq!(n(&c, "kill"), 0);
+        feed(&mut c, r#"{"k":1}"#);
+        assert_eq!(n(&c, "kill"), 1);
+        feed(&mut c, r#"{"k":3}"#);
+        assert_eq!(n(&c, "kill"), 3);
+        // a kill that lands while we're dead (damage over time) still counts
+        feed(&mut c, r#"{"dead":1,"k":4}"#);
+        assert_eq!(n(&c, "kill"), 4);
+        // new match: count resets to 0, no phantom kills
+        feed(&mut c, r#"{"live":0}"#);
+        feed(&mut c, r#"{"live":1,"k":0}"#);
+        assert_eq!(n(&c, "kill"), 4);
+    }
+
+    /// Older hooks (no kill count): impact kills still work.
+    #[test]
+    fn impact_kills_without_count() {
+        let mut c = Control::new(crate::config::Config::default_config());
+        feed(&mut c, r#"{"live":1,"dead":0}"#);
+        feed(&mut c, r#"{"ev":["kill"]}"#);
+        assert_eq!(n(&c, "kill"), 1);
+    }
 
     #[test]
     fn stems_fade_gradually() {
