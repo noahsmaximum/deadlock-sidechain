@@ -53,7 +53,7 @@ pub struct Snapshot {
     /// Seconds into the demo, if one is playing.
     pub demo: Option<f32>,
     pub stems: bool,
-    pub stem_levels: [f32; 3],
+    pub stem_levels: [f32; 4],
     pub stems_neural: bool,
     pub stems_latency_ms: u32,
     pub neural_ready: bool,
@@ -97,7 +97,7 @@ impl Default for Snapshot {
             cfg_gen: 0,
             demo: None,
             stems: false,
-            stem_levels: [-90.0; 3],
+            stem_levels: [-90.0; 4],
             stems_neural: false,
             stems_latency_ms: 0,
             neural_ready: false,

@@ -368,7 +368,7 @@ pub fn run(hub: Arc<Hub>, rx: Receiver<Cmd>, cfg: Config, opts: Opts) -> Result<
             s.neural_coverage = sh.neural.coverage.load(Ordering::Relaxed);
             s.neural_device = sh.neural.device.lock().unwrap().clone();
             s.neural_error = sh.neural.error.lock().unwrap().clone();
-            s.stem_levels = [0, 1, 2].map(|i| f32::from_bits(sh.stem_levels[i].load(Ordering::Relaxed)));
+            s.stem_levels = [0, 1, 2, 3].map(|i| f32::from_bits(sh.stem_levels[i].load(Ordering::Relaxed)));
         }
 
         // ---- SIDECHAIN_TRACE=1: energy + stem gains twice a second (debugging stems)
@@ -376,11 +376,12 @@ pub fn run(hub: Arc<Hub>, rx: Receiver<Cmd>, cfg: Config, opts: Opts) -> Result<
             next_trace = now + Duration::from_millis(500);
             use crate::config::Param;
             log(format!(
-                "trace energy {:.2} | drums {:+.1} vocals {:+.1} music {:+.1} dB | raw drums {:+.1} vocals {:+.1} | neural misses {} infer {} ms coverage {}%",
+                "trace energy {:.2} | drums {:+.1} vocals {:+.1} music {:+.1} bass {:+.1} dB | raw drums {:+.1} vocals {:+.1} | neural misses {} infer {} ms coverage {}%",
                 ctl.signal("energy"),
                 t[Param::DrumsDb.index()],
                 t[Param::VocalsDb.index()],
                 t[Param::MusicDb.index()],
+                t[Param::BassStemDb.index()],
                 ctl.raw_targets()[Param::DrumsDb.index()],
                 ctl.raw_targets()[Param::VocalsDb.index()],
                 sh.neural.misses.load(Ordering::Relaxed),

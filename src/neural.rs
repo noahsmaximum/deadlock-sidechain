@@ -345,7 +345,7 @@ struct Job {
 }
 struct Done {
     end: u64,
-    /// planar [drums, vocals, music][L, R][W]; empty = this window failed
+    /// planar [drums, vocals, music, bass][L, R][W]; empty = this window failed
     stems: Vec<f32>,
     audio: Vec<f32>,
 }
@@ -389,13 +389,13 @@ pub struct NeuralStems {
     spare_audio: Vec<Vec<f32>>,
     delay_line: VecDeque<[f32; 2]>,
     wins: VecDeque<Win>,
-    gains: [f32; 3],
+    gains: [f32; 4],
     zero_run: usize,
     fade: usize,
     test_drop: bool,
     pub status: Arc<NeuralStatus>,
-    pub levels_db: [f32; 3],
-    lvl_acc: [f32; 3],
+    pub levels_db: [f32; 4],
+    lvl_acc: [f32; 4],
     lvl_n: usize,
     lvl_have: usize,
     cov_have: u32,
@@ -446,13 +446,13 @@ impl NeuralStems {
             spare_audio: Vec::new(),
             delay_line: VecDeque::with_capacity(delay + 4096),
             wins: VecDeque::new(),
-            gains: [1.0; 3],
+            gains: [1.0; 4],
             zero_run: 0,
             fade: 0,
             test_drop: std::env::var("SIDECHAIN_TEST_DROP").is_ok(),
             status,
-            levels_db: [-90.0; 3],
-            lvl_acc: [0.0; 3],
+            levels_db: [-90.0; 4],
+            lvl_acc: [0.0; 4],
             lvl_n: 0,
             lvl_have: 0,
             cov_have: 0,
@@ -500,8 +500,8 @@ impl NeuralStems {
         }
     }
 
-    /// Process interleaved stereo in place. `target_db` = drums, vocals, music gains.
-    pub fn process(&mut self, buf: &mut [f32], target_db: [f32; 3]) {
+    /// Process interleaved stereo in place. `target_db` = drums, vocals, music, bass gains.
+    pub fn process(&mut self, buf: &mut [f32], target_db: [f32; 4]) {
         let want = target_db.map(|d| 10f32.powf(d.max(-60.0) / 20.0));
         self.take_results(false);
         for fr in buf.chunks_exact_mut(2) {
@@ -531,7 +531,7 @@ impl NeuralStems {
             let mut y = self.delay_line.pop_front().unwrap();
             let o = self.out_count;
             self.out_count += 1;
-            for i in 0..3 {
+            for i in 0..4 {
                 self.gains[i] += (want[i] - self.gains[i]) * 0.0005;
             }
             if self.blocking {
@@ -543,7 +543,7 @@ impl NeuralStems {
                 let w = self.wins.pop_front().unwrap();
                 let _ = self.spare_stems.send(w.stems);
             }
-            let (mut acc, mut wsum, mut ctx) = ([[0f32; 2]; 3], 0f32, 0u64);
+            let (mut acc, mut wsum, mut ctx) = ([[0f32; 2]; 4], 0f32, 0u64);
             for w in self.wins.iter_mut() {
                 if o + (W as u64) < w.end {
                     continue; // starts after o
@@ -594,12 +594,12 @@ impl NeuralStems {
             self.lvl_n += 1;
             if self.lvl_n >= 2048 {
                 if self.lvl_have > 0 {
-                    for i in 0..3 {
+                    for i in 0..4 {
                         let db = 10.0 * (self.lvl_acc[i] / self.lvl_have as f32 + 1e-12).log10();
                         self.levels_db[i] += (db - self.levels_db[i]) * 0.3;
                     }
                 }
-                self.lvl_acc = [0.0; 3];
+                self.lvl_acc = [0.0; 4];
                 self.lvl_n = 0;
                 self.lvl_have = 0;
             }
@@ -654,7 +654,7 @@ fn worker(model: PathBuf, jobs: Receiver<Job>, done: Sender<Done>, spare: Receiv
                 job = newer;
             }
         }
-        let mut out = spare.try_recv().unwrap_or_else(|_| vec![0f32; 3 * 2 * W]);
+        let mut out = spare.try_recv().unwrap_or_else(|_| vec![0f32; 4 * 2 * W]);
         if job.audio.iter().all(|v| v.abs() < 1e-6) {
             out.fill(0.0); // silence separates into silence; don't wake the GPU for it
         } else {
@@ -668,15 +668,9 @@ fn worker(model: PathBuf, jobs: Receiver<Job>, done: Sender<Done>, spare: Receiv
                     if prio.raised != was {
                         *st.device.lock().unwrap() = show(&prio);
                     }
-                    // [drums, bass, other, vocals] -> [drums, vocals, music]
-                    let src = |s: usize, c: usize| &s4[(s * 2 + c) * W..(s * 2 + c + 1) * W];
-                    for c in 0..2 {
-                        out[c * W..(c + 1) * W].copy_from_slice(src(0, c));
-                        out[(2 + c) * W..(3 + c) * W].copy_from_slice(src(3, c));
-                        let (b, o) = (src(1, c), src(2, c));
-                        for (i, v) in out[(4 + c) * W..(5 + c) * W].iter_mut().enumerate() {
-                            *v = b[i] + o[i];
-                        }
+                    // model order [drums, bass, other, vocals] -> ours [drums, vocals, music, bass]
+                    for (dst, src) in [0, 3, 2, 1].into_iter().enumerate() {
+                        out[dst * 2 * W..(dst + 1) * 2 * W].copy_from_slice(&s4[src * 2 * W..(src + 1) * 2 * W]);
                     }
                 }
                 Err(e) => {
@@ -692,10 +686,10 @@ fn worker(model: PathBuf, jobs: Receiver<Job>, done: Sender<Done>, spare: Receiv
     prio.set(false);
 }
 
-/// `sidechain neural-stream <in.wav> <out.wav> [drums vocals music dB] [--realtime] [--prio normal|auto|high] [--hop s]`:
+/// `sidechain neural-stream <in.wav> <out.wav> [drums vocals music bass dB] [--realtime] [--prio normal|auto|high] [--hop s]`:
 /// run the streaming separator over a file, offline (waits for every separation) or paced in real
 /// time like the live engine, and write the result with the latency removed.
-pub fn stream_test(inp: &str, out: &str, db: [f32; 3], realtime: bool, prio: GpuPriority, hop: f32) -> Result<()> {
+pub fn stream_test(inp: &str, out: &str, db: [f32; 4], realtime: bool, prio: GpuPriority, hop: f32) -> Result<()> {
     let w = crate::wav::read(inp)?;
     if w.rate as usize != SR || w.channels != 2 {
         return Err(anyhow!("need 44.1 kHz stereo"));

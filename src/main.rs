@@ -165,10 +165,11 @@ fn real_main() -> Result<()> {
         ),
         Some("neural-stream") => {
             let db = |i: usize| pos.get(3 + i).and_then(|s| s.parse().ok()).unwrap_or(0.0);
+            // drums vocals music bass
             neural::stream_test(
                 pos.get(1).copied().unwrap_or("ab/original.wav"),
                 pos.get(2).copied().unwrap_or("stream.wav"),
-                [db(0), db(1), db(2)],
+                [db(0), db(1), db(2), db(3)],
                 flag("--realtime"),
                 match opt("--prio") {
                     Some("high") => config::GpuPriority::High,
@@ -436,7 +437,7 @@ fn render_offline(input: &str, output: &str, script: &str, cfg: Config, trace: O
         let tv = ctl.targets();
         let db = config::STEM_PARAMS.map(|p| tv[p.index()]);
         match stems.as_mut() {
-            Some(Off::Dsp(s)) => s.process(chunk, db),
+            Some(Off::Dsp(s)) => s.process(chunk, [db[0], db[1], db[2]]),
             Some(Off::Neural(n)) => n.process(chunk, db),
             None => {}
         }

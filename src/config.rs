@@ -24,9 +24,10 @@ pub enum Param {
     DrumsDb,
     VocalsDb,
     MusicDb,
+    BassStemDb,
 }
 
-pub const PARAMS: [Param; 12] = [
+pub const PARAMS: [Param; 13] = [
     Param::GainDb,
     Param::LowpassOct,
     Param::HighpassOct,
@@ -39,10 +40,12 @@ pub const PARAMS: [Param; 12] = [
     Param::DrumsDb,
     Param::VocalsDb,
     Param::MusicDb,
+    Param::BassStemDb,
 ];
 
-/// The stem gains (drums, vocals, music), in PARAMS order.
-pub const STEM_PARAMS: [Param; 3] = [Param::DrumsDb, Param::VocalsDb, Param::MusicDb];
+/// The stem gains (drums, vocals, music, bass), in PARAMS order. Bass is neural-only: the Fast
+/// stems leave the bass inside music and ignore it.
+pub const STEM_PARAMS: [Param; 4] = [Param::DrumsDb, Param::VocalsDb, Param::MusicDb, Param::BassStemDb];
 
 impl Param {
     pub fn index(self) -> usize {
@@ -62,6 +65,16 @@ impl Param {
             Param::DrumsDb => "drums",
             Param::VocalsDb => "vocals",
             Param::MusicDb => "music",
+            Param::BassStemDb => "bassline",
+        }
+    }
+    /// Stem rows/strips: "Drums", "Vocals", "Music", "Bass".
+    pub fn stem_title(self) -> &'static str {
+        match self {
+            Param::DrumsDb => "Drums",
+            Param::VocalsDb => "Vocals",
+            Param::BassStemDb => "Bass",
+            _ => "Music",
         }
     }
     pub fn is_stem(self) -> bool {
@@ -81,6 +94,7 @@ impl Param {
             Param::DrumsDb => "Drums stem (dB)",
             Param::VocalsDb => "Vocals stem (dB)",
             Param::MusicDb => "Music stem (dB)",
+            Param::BassStemDb => "Bass stem (dB)",
         }
     }
     /// Value with no modulation.
@@ -96,7 +110,7 @@ impl Param {
             Param::BassDb | Param::MidDb | Param::TrebleDb => (-18.0, 12.0),
             Param::Width => (0.0, 2.0),
             Param::Drive => (0.0, 1.0),
-            Param::DrumsDb | Param::VocalsDb | Param::MusicDb => (-40.0, 6.0),
+            Param::DrumsDb | Param::VocalsDb | Param::MusicDb | Param::BassStemDb => (-40.0, 6.0),
         }
     }
     /// Sensible slider range for a route amount on this param.
@@ -108,7 +122,7 @@ impl Param {
             Param::Resonance | Param::Drive => (0.0, 1.0),
             Param::BassDb | Param::MidDb | Param::TrebleDb => (-18.0, 12.0),
             Param::Width => (-1.0, 1.0),
-            Param::DrumsDb | Param::VocalsDb | Param::MusicDb => (-40.0, 40.0),
+            Param::DrumsDb | Param::VocalsDb | Param::MusicDb | Param::BassStemDb => (-40.0, 40.0),
         }
     }
     pub fn clamp(self, v: f32) -> f32 {

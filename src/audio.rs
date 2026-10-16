@@ -24,15 +24,16 @@ pub enum StemProc {
 }
 
 impl StemProc {
-    fn process(&mut self, buf: &mut [f32], db: [f32; 3]) {
+    /// `db`: drums, vocals, music, bass (Fast has no bass stem: its music keeps the bass).
+    fn process(&mut self, buf: &mut [f32], db: [f32; 4]) {
         match self {
-            StemProc::Dsp(s) => s.process(buf, db),
+            StemProc::Dsp(s) => s.process(buf, [db[0], db[1], db[2]]),
             StemProc::Neural(n, _, _) => n.process(buf, db),
         }
     }
-    fn levels(&self) -> [f32; 3] {
+    fn levels(&self) -> [f32; 4] {
         match self {
-            StemProc::Dsp(s) => s.levels_db,
+            StemProc::Dsp(s) => [s.levels_db[0], s.levels_db[1], s.levels_db[2], -90.0],
             StemProc::Neural(n, _, _) => n.levels_db,
         }
     }
@@ -68,7 +69,7 @@ pub struct Shared {
     /// Current added latency of the stems stage, ms.
     pub stems_latency_ms: AtomicU32,
     /// Stem activity in dB (f32 bits): drums, vocals, music.
-    pub stem_levels: [AtomicU32; 3],
+    pub stem_levels: [AtomicU32; 4],
 }
 
 impl Shared {
@@ -97,7 +98,7 @@ impl Shared {
             neural_model: Mutex::new(std::path::PathBuf::new()),
             neural: Arc::new(crate::neural::NeuralStatus::default()),
             stems_latency_ms: AtomicU32::new(0),
-            stem_levels: [AtomicU32::new(0), AtomicU32::new(0), AtomicU32::new(0)],
+            stem_levels: [AtomicU32::new(0), AtomicU32::new(0), AtomicU32::new(0), AtomicU32::new(0)],
         })
     }
 }
@@ -354,10 +355,10 @@ fn render(sh: &Shared, chain: &mut Chain, rs: &mut Resampler, stems: &mut Option
         }
         if let Some(st) = stems.as_mut() {
             // bypass keeps the stems in the path at unity so latency doesn't jump on A/B
-            let db = if chain.bypass { [0.0; 3] } else { STEM_PARAMS.map(|p| targets[p.index()]) };
+            let db = if chain.bypass { [0.0; 4] } else { STEM_PARAMS.map(|p| targets[p.index()]) };
             st.process(&mut f32buf, db);
             let lv = st.levels();
-            for i in 0..3 {
+            for i in 0..4 {
                 sh.stem_levels[i].store(lv[i].to_bits(), Ordering::Relaxed);
             }
         }
