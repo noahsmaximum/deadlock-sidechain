@@ -22,26 +22,25 @@ It works in normal matchmaking: client-side only, with no server plugin and no m
 3. **Steam → Deadlock → Launch options:** `-netconport 29000 -condebug`.
 4. Start Spotify and play. Spotify is only taken over while `deadlock.exe` runs.
 
-To hear everything without the game, click **Play demo match** on the Live tab (or run
+To hear everything without the game, use **Try one → Play a 25 s demo match** on the Now page (or run
 `run.bat --demo`): a scripted 25 s fight with walking, sprinting, shooting, a kill, an ult, a death,
 a respawn and an objective.
 
 ## The settings window
 
-| Tab | What's there |
-|---|---|
-| **Live** | energy meter; stems mixer (drums / vocals / music level and activity); live EQ curve against the calm / full-energy curves; current level, width, filters; game facts (HP, ammo, speed, and the observed speed range with one-click calibration); recent events; active signal meters; test buttons for every event |
-| **Energy** | the core idea: **Stems** (on/off, each stem's calm level and the energy range it comes in over), the calm-state sliders, what "full energy" adds, rise/fall time, and the weight of each signal in energy (with live contribution bars) |
-| **Signals** | per-signal on/off, live meter, test, attack/release, strength, and damage scale / low-HP threshold / speed range |
-| **Routes** | the full modulation matrix (signal → parameter → amount, plus the slice of the signal it responds over), filterable |
-| **Text rules** | regex rules that map objective banners / announcement toasts to signals |
-| **Audio** | music app, silent sink, output device, latency, only-while-Deadlock-runs, game input settings, config folder, reset to defaults |
-| **Log** | everything the engine reports |
+Four places, on the left:
 
-The top bar has **Bypass** (A/B against the dry track), **Intensity** (scales every move),
-**Trim**, **Presets** (Default, Subtle, Cinematic, Club, Events only, plus your own via "Save as
-preset…") and **Save / Revert**. Every edit applies live; Save writes `sidechain.toml` (which also
-hot-reloads if you edit it by hand).
+| Page | What's there |
+|---|---|
+| **Now** | Energy, with where each stem comes back marked on the bar, and what's building it right now. The tone curve now vs calm vs full. Stems as channel strips. Your game state (alive / dead / spectating, health, ammo, speed, kills). A feed of recent moments, plus **Try one** (demo match, or fire any moment). |
+| **Sound** | The core idea. **Calm and full energy**: every setting as a pair of sliders, where the music sits when calm and where it ends up at full energy. **Stems**: each stem's calm level and a two-handle slider for the energy range it comes back over. **What builds energy**, with live contribution bars. Output trim. |
+| **Moments** | Every game event in one list (gun, fighting, you, objectives, movement & menus). Pick one to see what it does to the music (add or remove effects), its feel (swell in, fade back, strength, plus damage sensitivity / low-health threshold / speed range), whether it builds energy, the on-screen-message triggers that fire it, and a Test button. **Message triggers** (under Advanced) lists them all. |
+| **Setup** | Connection checklist (Deadlock, game data, launch options with a Copy button, music routing), audio devices, the stem engine (Neural / Fast, interval, GPU priority, live status), game input, files, and diagnostics with the activity log. |
+
+The header has **Presets** (built in, plus your own via "Save current sound as preset…"),
+**Intensity** (scales every move) and an **Effects** switch (off = the dry track, for A/B). Every
+edit plays immediately; a bar at the bottom offers **Save** (Ctrl+S) or **Revert** while there
+are unsaved changes. Save writes `sidechain.toml`, which also hot-reloads if you edit it by hand.
 
 ## How it works
 

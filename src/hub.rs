@@ -34,6 +34,10 @@ pub struct Snapshot {
     pub spd: Option<f32>,
     pub spd_range: Option<(f32, f32)>,
     pub dead: bool,
+    /// The HUD is showing a teammate (we're dead, spectating).
+    pub spec: bool,
+    /// Our kill count this match, when the hook reports it.
+    pub kills: Option<f32>,
     pub live: bool,
     pub game_running: bool,
     pub input: String,
@@ -80,6 +84,8 @@ impl Default for Snapshot {
             spd: None,
             spd_range: None,
             dead: false,
+            spec: false,
+            kills: None,
             live: false,
             game_running: false,
             input: "starting".into(),

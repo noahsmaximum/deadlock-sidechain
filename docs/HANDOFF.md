@@ -23,7 +23,7 @@ the real output. There's an egui settings window with a tray icon. The user tune
 | `src/bin/gpuload.rs` | stand-in for a game's GPU load (off-screen uncapped shader, prints fps + worst frame): `gpuload 3000 <secs>` ≈ 139 fps, 100 % GPU |
 | `tools/convert_fp16.py` | makes `models/htdemucs_fwd_fp16.onnx` |
 | `src/dsp.rs` | SVF chain + `response_db` for the GUI curve |
-| `src/gui.rs` | egui window (Live / Energy / Signals / Routes / Text rules / Audio / Log), tray, off-screen screenshot env vars |
+| `src/gui/` | egui window: `mod.rs` shell (rail, header, save bar, tray, presets dialog), `theme.rs` (palette, Segoe UI + Phosphor icons, widgets: card, toggle, segmented, range_slider, meters, eq_plot), `catalog.rs` (plain names for signals/params), pages `now.rs`, `sound.rs`, `moments.rs`, `setup.rs`. Screenshots: `SIDECHAIN_TAB=now|sound|moments|setup`, `SIDECHAIN_MOMENT=<signal>`, `SIDECHAIN_WINDOW_POS=-4000,-4000`, `SIDECHAIN_WINDOW_SIZE=w,h`, then `tools/shot.ps1` |
 | `src/app.rs`, `routing.rs` | per-app output override (AudioPolicyConfig), verification, guardian process |
 | `tools/*.py` | offline checks (`offline_check.py`, `stems_check.py`) |
 
