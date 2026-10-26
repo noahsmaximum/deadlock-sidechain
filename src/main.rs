@@ -1,4 +1,6 @@
 //! sidechain — EQ Spotify from Deadlock gameplay.
+// No console window when double-clicked; commands still print from a terminal (system::attach_console).
+#![windows_subsystem = "windows"]
 //!
 //!   game (Panorama hook) --$.Msg--> netcon / console.log --> control (signals x routes)
 //!   Spotify --(re-pointed to a silent sink)--> process loopback --> DSP --> your output
@@ -13,11 +15,13 @@ mod engine;
 mod game;
 mod gui;
 mod hub;
+mod icon;
 mod neural;
 mod presets;
 mod routing;
 mod sessions;
 mod stems;
+mod system;
 mod wav;
 
 use std::io::Write;
@@ -81,6 +85,9 @@ pub fn log(msg: impl AsRef<str>) {
 }
 
 pub fn status(line: &str) {
+    if !system::HAS_CONSOLE.load(Ordering::Relaxed) {
+        return;
+    }
     let w = console_width() - 1;
     let line: String = line.chars().take(w).collect();
     let mut shown = STATUS_SHOWN.lock().unwrap();
@@ -96,6 +103,9 @@ unsafe extern "C" {
 }
 
 pub fn key() -> Option<char> {
+    if !system::HAS_CONSOLE.load(Ordering::Relaxed) {
+        return None;
+    }
     unsafe { (_kbhit() != 0).then(|| char::from_u32(_getch() as u32).unwrap_or('\0')) }
 }
 
@@ -113,8 +123,13 @@ unsafe extern "system" fn on_ctrl(kind: u32) -> windows::core::BOOL {
 
 fn main() {
     START.get_or_init(Instant::now);
+    system::attach_console();
+    system::prepare_directml();
     if let Err(e) = real_main() {
         eprintln!("error: {e:#}");
+        if !system::HAS_CONSOLE.load(Ordering::Relaxed) {
+            system::error_box(&format!("{e:#}"));
+        }
         std::process::exit(1);
     }
 }
@@ -206,9 +221,14 @@ fn real_main() -> Result<()> {
             Ok(())
         }
         None => {
+            // one Sidechain at a time (two would fight over the music app); a second launch
+            // brings the running one's window forward instead
+            let Some(_instance) = system::single_instance()? else { return Ok(()) };
+            system::watch_session_end();
             let (path, cfg) = load()?;
             let for_secs = opt("--for").map(str::parse::<f32>).transpose()?;
-            let opts = engine::Opts { demo: flag("--demo"), sim: flag("--sim"), quiet: flag("--quiet"), for_secs };
+            let quiet = flag("--quiet") || !system::HAS_CONSOLE.load(Ordering::Relaxed);
+            let opts = engine::Opts { demo: flag("--demo"), sim: flag("--sim"), quiet, for_secs };
             run(path, cfg, opts, flag("--headless"), flag("--hidden"))
         }
         Some(other) => bail!("unknown command {other:?}\n\n{USAGE}"),

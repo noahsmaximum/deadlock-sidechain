@@ -453,11 +453,18 @@ pub fn resolve_path(explicit: Option<&str>) -> Result<PathBuf> {
     if let Some(p) = explicit {
         return Ok(PathBuf::from(p));
     }
+    // a sidechain.toml in the working folder or next to the exe (portable / dev), else the user's
+    // %APPDATA%\Sidechain, created from the defaults on first run
     let local = PathBuf::from("sidechain.toml");
     if local.exists() {
         return Ok(std::path::absolute(&local).unwrap_or(local));
     }
     let dir = std::env::current_exe()?.parent().map(Path::to_path_buf).unwrap_or_default();
+    if dir.join("sidechain.toml").exists() {
+        return Ok(dir.join("sidechain.toml"));
+    }
+    let dir = crate::system::config_dir();
+    std::fs::create_dir_all(&dir).with_context(|| dir.display().to_string())?;
     let path = dir.join("sidechain.toml");
     if !path.exists() {
         std::fs::write(&path, DEFAULT_TOML).with_context(|| format!("write {}", path.display()))?;

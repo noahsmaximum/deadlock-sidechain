@@ -12,18 +12,30 @@ It works in normal matchmaking: client-side only, with no server plugin and no m
 
 ## Install
 
-1. **Engine + window:** `run.bat` (from cmd or Explorer; in PowerShell use `.\run.bat`). It
-   rebuilds if needed and opens the settings window. Closing the window hides it to the
-   **tray**. Right-click the tray icon → Quit to stop, which gives Spotify its output back.
-2. **Hook addon:** `.\build_addon.ps1`, then add `dist\sidechain-hook.vpk` in **Deadlock Mod
-   Manager** as a local mod. For later updates, close the game and run `.\build_addon.ps1 -Deploy`,
-   which overwrites the installed copy. The addon overrides `citadel_hud_top_bar`, so disable the
-   old `DEADLOCK_DEATH_HOOK` / Venator kill hook.
-3. **Steam → Deadlock → Launch options:** `-netconport 29000 -condebug`.
+1. **The app:** `Sidechain.exe` is the whole thing. The neural model, DirectML and the hook addon
+   are built in. Build and install it with `.	ools\package.ps1 -Install`, which:
+   - puts it in `%LOCALAPPDATA%\Programs\Sidechain`
+   - adds a Start menu entry
+   - copies this repo's settings to `%APPDATA%\Sidechain`, where the app keeps its settings and presets
+
+   Or just run `dist\Sidechain.exe` from anywhere. Closing the window hides it to the **tray**.
+   Right-click the tray icon → Quit to stop, which gives Spotify its output back. Setup → App →
+   **Start with Windows** starts it hidden in the tray when you sign in. Launching it again while
+   it runs brings the window back.
+2. **Hook addon:** Setup → Connection → Game data → **Get the addon file** saves
+   `sidechain-hook.vpk` to Downloads. Add it in **Deadlock Mod Manager** as a local mod. Later
+   versions offer **Update addon** there (with the game closed). The addon overrides
+   `citadel_hud_top_bar`, so disable the old `DEADLOCK_DEATH_HOOK` / Venator kill hook.
+   (Venator Verses reads Sidechain's lines too.)
+3. **Steam → Deadlock → Launch options:** `-netconport 29000 -condebug` (Setup has a Copy button).
 4. Start Spotify and play. Spotify is only taken over while `deadlock.exe` runs.
 
+**Developing:** `run.bat` still builds and runs from the repo with the repo's `sidechain.toml`
+(a `sidechain.toml` in the working folder or next to the exe takes priority over `%APPDATA%`).
+From a terminal the exe prints as before; double-clicked it has no console window.
+
 To hear everything without the game, use **Try one → Play a 25 s demo match** on the Now page (or run
-`run.bat --demo`): a scripted 25 s fight with walking, sprinting, shooting, a kill, an ult, a death,
+`Sidechain.exe --demo`): a scripted 25 s fight with walking, sprinting, shooting, a kill, an ult, a death,
 a respawn and an objective.
 
 ## The settings window
