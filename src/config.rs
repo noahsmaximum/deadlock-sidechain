@@ -80,23 +80,6 @@ impl Param {
     pub fn is_stem(self) -> bool {
         STEM_PARAMS.contains(&self)
     }
-    pub fn label(self) -> &'static str {
-        match self {
-            Param::GainDb => "Level (dB)",
-            Param::LowpassOct => "Low-pass (oct)",
-            Param::HighpassOct => "High-pass (oct)",
-            Param::Resonance => "Resonance",
-            Param::BassDb => "Bass (dB)",
-            Param::MidDb => "Mid (dB)",
-            Param::TrebleDb => "Treble (dB)",
-            Param::Width => "Width",
-            Param::Drive => "Drive",
-            Param::DrumsDb => "Drums stem (dB)",
-            Param::VocalsDb => "Vocals stem (dB)",
-            Param::MusicDb => "Music stem (dB)",
-            Param::BassStemDb => "Bass stem (dB)",
-        }
-    }
     /// Value with no modulation.
     pub fn neutral(self) -> f32 {
         if self == Param::Width { 1.0 } else { 0.0 }

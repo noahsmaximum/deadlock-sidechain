@@ -343,6 +343,8 @@ pub fn run(hub: Arc<Hub>, rx: Receiver<Cmd>, cfg: Config, opts: Opts) -> Result<
             (s.hp, s.hpm, s.ammo, s.ammom, s.spd) = (ctl.hp, ctl.hpm, ctl.ammo, ctl.ammom, ctl.spd);
             s.spd_range = ctl.spd_range;
             s.dead = ctl.dead;
+            s.spec = ctl.spec;
+            s.kills = ctl.kills;
             s.live = ctl.in_match();
             s.game_running = game_up;
             s.input = src.to_string();

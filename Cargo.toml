@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.104"
 eframe = { version = "0.32", default-features = false, features = ["glow", "default_fonts"] }
+egui-phosphor = "0.10"
 ort = { version = "2.0.0-rc.14", features = ["directml"] }
 raw-window-handle = "0.6"
 realfft = "3.5.0"
