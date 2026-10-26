@@ -84,6 +84,25 @@ Fixes:
 **NOT verified in a match yet:** the `.KillsLabel` text is assumed to be the kill count. Check `k` in the next log
 (`sidechain scan`, or grep `"k":`).
 
+## All-in-one exe (2026-10-26)
+- `build.rs` embeds `models/htdemucs_fwd_fp16.onnx` (cfg `bundled_model`, loaded via `commit_from_memory`; the config's
+  model path falls back to `neural::BUNDLED`), ort's DirectML.dll (`bundled_dml`, `/DELAYLOAD:DirectML.dll`, unpacked to
+  `%LOCALAPPDATA%\Sidechainuntime\directml-<size>\` + `SetDllDirectory` + `LoadLibrary` before first use; a copy next to
+  the exe wins), `dist/sidechain-hook.vpk` (`bundled_hook`) and an .ico generated from `src/icon.rs` (`winresource`).
+  `SIDECHAIN_NO_BUNDLE=1` builds lean. The exe is ~132 MB.
+- `#![windows_subsystem = "windows"]`; `system::attach_console` borrows the parent console or uses redirected handles,
+  so CLI commands still print. No console means no Ctrl handler: `system::watch_session_end` (hidden top-level window,
+  WM_ENDSESSION) restores the music app at logoff/shutdown (**untested**).
+- Single instance: a `Local\Sidechain.Instance` mutex; a second launch signals `Local\Sidechain.Show`, and the first shows
+  its window. `--hidden`: eframe force-shows after frame 1, so the app sends `Visible(false)` for the first frames.
+- Config: `./sidechain.toml` > next to the exe > `%APPDATA%\Sidechain\sidechain.toml` (created from the defaults).
+- Setup: Start with Windows (HKCU Run, `--hidden`; toggle **untested**), and hook addon state (scans `citadelddons` for small
+  VPKs containing `sidechain_hook`; Deadlock is found via the running game or Steam's `libraryfolders.vdf`) with Update /
+  Get the addon file.
+- `tools/package.ps1 [-Install]` builds `dist\Sidechain.exe` and installs it to `%LOCALAPPDATA%\Programs\Sidechain` with a
+  Start menu shortcut, copying the repo's config and presets to `%APPDATA%\Sidechain` (done for the user 2026-10-26).
+  **The user's live settings now live in `%APPDATA%\Sidechain`, not the repo.**
+
 ## Optimization candidates (roughly by payoff)
 1. **Neural, still open:** IoBinding (keep the ~55 MB of in/out tensors on the GPU); skipping separation when stems are
    all at 0 dB for a while; adaptive hop from measured time; a dedicated high-priority D3D12 compute queue via

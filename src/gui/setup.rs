@@ -6,6 +6,7 @@ use super::theme::*;
 use super::{App, refresh_devices};
 use crate::config::{Config, GpuPriority, StemMode};
 use crate::hub::{Snapshot, log_lines};
+use crate::system::{self, HookState};
 
 /// One checklist row: status icon, name, detail, optional extra widgets.
 fn check_row(ui: &mut Ui, state: Option<bool>, name: &str, detail: &str, extra: impl FnOnce(&mut Ui)) {
@@ -27,9 +28,19 @@ fn check_row(ui: &mut Ui, state: Option<bool>, name: &str, detail: &str, extra: 
 
 impl App {
     pub(super) fn page_setup(&mut self, ui: &mut Ui, snap: &Snapshot) {
+        // look for the installed hook addon now and then (it's a folder walk: off the UI thread)
+        if system::HOOK_VPK.is_some() && self.hook_checked.is_none_or(|t| t.elapsed().as_secs() > 15) {
+            self.hook_checked = Some(std::time::Instant::now());
+            let (slot, ctx) = (self.hook.clone(), ui.ctx().clone());
+            std::thread::spawn(move || {
+                *slot.lock().unwrap() = Some(system::hook_state());
+                ctx.request_repaint();
+            });
+        }
         self.connection_card(ui, snap);
         self.audio_card(ui);
         self.engine_card(ui, snap);
+        self.app_card(ui);
         ui.columns(2, |cols| {
             self.input_card(&mut cols[0], snap);
             self.files_card(&mut cols[1]);
@@ -49,7 +60,45 @@ impl App {
                 _ if snap.game_running => "Nothing from the game yet: add dist\\sidechain-hook.vpk in Deadlock Mod Manager".into(),
                 _ => "Starts reporting once you're in Deadlock".into(),
             };
-            check_row(ui, if snap.game_running { Some(live) } else { None }, "Game data (hook addon)", &hook, |_| {});
+            let state = self.hook.lock().unwrap().clone();
+            let mut act: Option<&'static str> = None;
+            let game_on = snap.game_running;
+            check_row(ui, if snap.game_running { Some(live) } else { None }, "Game data (hook addon)", &hook, |ui| match &state {
+                Some(HookState::UpToDate(_)) => {
+                    ui.label(caption("addon up to date"));
+                }
+                Some(HookState::Outdated(_)) => {
+                    let b = ui.add_enabled(!game_on, egui::Button::new(RichText::new(format!("{}  Update addon", icon::ARROW_CIRCLE_UP)).color(TEXT)).fill(SURFACE_2));
+                    if b.on_hover_text("This Sidechain has a newer hook addon than the one installed").on_disabled_hover_text("Close Deadlock first").clicked() {
+                        act = Some("update");
+                    }
+                }
+                Some(HookState::NotInstalled) => {
+                    if ghost_button(ui, format!("{}  Get the addon file", icon::DOWNLOAD_SIMPLE))
+                        .on_hover_text("Saves sidechain-hook.vpk to Downloads: add it in Deadlock Mod Manager as a local mod")
+                        .clicked()
+                    {
+                        act = Some("export");
+                    }
+                }
+                _ => {}
+            });
+            match act {
+                Some("update") => {
+                    if let Some(HookState::Outdated(copies)) = &state {
+                        match system::update_hook(copies) {
+                            Ok(()) => self.flash("Hook addon updated"),
+                            Err(e) => self.flash(format!("Couldn't update the addon: {e:#}")),
+                        }
+                        self.hook_checked = None;
+                    }
+                }
+                Some("export") => match system::export_hook() {
+                    Ok(p) => self.flash(format!("Saved {} — add it in Mod Manager", p.display())),
+                    Err(e) => self.flash(format!("Couldn't save the addon: {e:#}")),
+                },
+                _ => {}
+            }
             ui.separator();
             let opts = format!("-netconport {} -condebug", if self.draft.input.netcon_port > 0 { self.draft.input.netcon_port } else { 29000 });
             check_row(ui, None, "Launch options", &format!("Steam → Deadlock → Properties → Launch options:  {opts}"), |ui| {
@@ -183,6 +232,24 @@ impl App {
             } else if snap.stems {
                 banner_inline(ui, &format!("Model not found ({}); using Fast for now. See the README's neural stems setup.", self.draft.stems.neural_model));
             }
+        });
+    }
+
+    fn app_card(&mut self, ui: &mut Ui) {
+        card(ui, |ui| {
+            card_head(ui, icon::APP_WINDOW, "App", None);
+            ui.horizontal(|ui| {
+                let mut on = self.autostart;
+                if toggle(ui, &mut on).changed() {
+                    match system::set_autostart(on) {
+                        Ok(()) => self.autostart = on,
+                        Err(e) => self.flash(format!("Couldn't change start-up: {e:#}")),
+                    }
+                }
+                ui.label("Start with Windows");
+                ui.label(caption("Starts hidden in the tray when you sign in"));
+            });
+            ui.label(caption("Closing the window keeps Sidechain running in the tray; right-click the tray icon to quit (that gives the music app its output back)."));
         });
     }
 

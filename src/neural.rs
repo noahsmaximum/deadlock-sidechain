@@ -36,6 +36,24 @@ const T: usize = 336; // ceil(W / HL)
 const PAD: usize = HL / 2 * 3; // 1536
 pub const SOURCES: [&str; 4] = ["drums", "bass", "other", "vocals"];
 
+/// Stands in for a model path when the exe's own embedded copy is used.
+pub const BUNDLED: &str = "<built-in fp16 model>";
+
+#[cfg(bundled_model)]
+static MODEL: Option<&[u8]> = Some(include_bytes!(env!("SIDECHAIN_MODEL_FILE")));
+#[cfg(not(bundled_model))]
+static MODEL: Option<&[u8]> = None;
+
+/// The configured model (preferring its fp16 copy); if neither is on disk, the built-in one.
+pub fn resolve_model(model: &Path) -> PathBuf {
+    let f = prefer_fp16(model);
+    if f.exists() || MODEL.is_none() { f } else { PathBuf::from(BUNDLED) }
+}
+
+pub fn model_available(model: &Path) -> bool {
+    model.exists() || (model == Path::new(BUNDLED) && MODEL.is_some())
+}
+
 /// `foo.onnx` -> `foo_fp16.onnx` when that exists next to it.
 pub fn prefer_fp16(model: &Path) -> PathBuf {
     let fp16 = model.with_file_name(format!("{}_fp16.onnx", model.file_stem().and_then(|s| s.to_str()).unwrap_or("")));
@@ -168,7 +186,10 @@ impl Demucs {
             } else {
                 b = b.with_intra_threads(cpu_threads).map_err(e)?;
             }
-            Ok(b.commit_from_file(model)?)
+            match MODEL.filter(|_| model == Path::new(BUNDLED)) {
+                Some(bytes) => Ok(b.commit_from_memory(bytes)?),
+                None => Ok(b.commit_from_file(model)?),
+            }
         };
         let precision = if model.to_string_lossy().contains("fp16") { "fp16" } else { "fp32" };
         let (session, device) = if gpu {
@@ -694,7 +715,7 @@ pub fn stream_test(inp: &str, out: &str, db: [f32; 4], realtime: bool, prio: Gpu
     if w.rate as usize != SR || w.channels != 2 {
         return Err(anyhow!("need 44.1 kHz stereo"));
     }
-    let model = prefer_fp16(Path::new("models/htdemucs_fwd.onnx"));
+    let model = resolve_model(Path::new("models/htdemucs_fwd.onnx"));
     let status = Arc::new(NeuralStatus::default());
     let mut n = NeuralStems::new(&model, hop, !realtime, prio, status.clone());
     let t = Instant::now();

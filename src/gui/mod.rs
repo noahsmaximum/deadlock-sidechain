@@ -26,36 +26,8 @@ use crate::presets::{self, Preset};
 use crate::{CLEANED, STOP};
 use theme::*;
 
-// ---------------------------------------------------------------------------- icon
+use crate::icon::icon_rgba;
 
-/// Procedural icon: dark disc with three brass EQ bars.
-fn icon_rgba(size: u32) -> Vec<u8> {
-    let mut px = vec![0u8; (size * size * 4) as usize];
-    let s = size as f32;
-    let c = s / 2.0;
-    for y in 0..size {
-        for x in 0..size {
-            let (fx, fy) = (x as f32 + 0.5, y as f32 + 0.5);
-            let d = ((fx - c).powi(2) + (fy - c).powi(2)).sqrt();
-            let a = (c - d).clamp(0.0, 1.0);
-            if a <= 0.0 {
-                continue;
-            }
-            let mut col = [22u8, 24, 30];
-            for (bx, bh) in [(0.30, 0.34), (0.50, 0.58), (0.70, 0.44)] {
-                let half_w = s * 0.075;
-                let bottom = s * 0.74;
-                let top = bottom - s * bh;
-                if (fx - s * bx).abs() < half_w && fy > top && fy < bottom {
-                    col = [240, 168, 48];
-                }
-            }
-            let i = ((y * size + x) * 4) as usize;
-            px[i..i + 4].copy_from_slice(&[col[0], col[1], col[2], (a * 255.0) as u8]);
-        }
-    }
-    px
-}
 
 // ---------------------------------------------------------------------------- window plumbing
 
@@ -206,6 +178,13 @@ struct App {
     /// Moments page: selected signal.
     moment: String,
     show_log: bool,
+    /// Setup: installed hook addon vs the bundled one (checked in the background).
+    hook: Arc<Mutex<Option<crate::system::HookState>>>,
+    hook_checked: Option<Instant>,
+    autostart: bool,
+    /// Tray-only start: eframe shows the window after its first frame no matter what, so hide
+    /// it again for the first couple of frames.
+    hide_frames: u8,
 }
 
 impl App {
@@ -222,6 +201,15 @@ impl App {
         let (generation, cfg) = hub.active.lock().unwrap().clone();
         let visible = Arc::new(AtomicBool::new(!start_hidden));
         let tray = make_tray(hub.clone(), visible.clone(), cc.egui_ctx.clone());
+        // a second launch of the exe asks this one to come forward
+        {
+            let (v, c) = (visible.clone(), cc.egui_ctx.clone());
+            crate::system::on_show_request(move || {
+                v.store(true, Ordering::Relaxed);
+                show_window(true);
+                c.request_repaint();
+            });
+        }
         let preset_dir = presets::dir(&hub.cfg_path);
         let mut all = presets::builtin();
         all.extend(presets::load_user(&preset_dir));
@@ -260,6 +248,10 @@ impl App {
             toast: None,
             moment: std::env::var("SIDECHAIN_MOMENT").unwrap_or_else(|_| "kill".into()),
             show_log: std::env::var("SIDECHAIN_TAB").is_ok_and(|t| t == "log"),
+            hook: Arc::new(Mutex::new(None)),
+            hook_checked: None,
+            autostart: crate::system::autostart(),
+            hide_frames: if start_hidden { 3 } else { 0 },
         }
     }
 
@@ -347,6 +339,11 @@ impl eframe::App for App {
         if CLEANED.load(Ordering::SeqCst) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
+        }
+        if self.hide_frames > 0 {
+            self.hide_frames -= 1;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            ctx.request_repaint();
         }
         if ctx.input(|i| i.viewport().close_requested()) && !STOP.load(Ordering::SeqCst) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
@@ -670,7 +667,9 @@ pub fn run(hub: Arc<Hub>, start_hidden: bool) -> Result<()> {
         .with_title("Sidechain")
         .with_inner_size([1120.0, 780.0])
         .with_min_inner_size([940.0, 600.0])
-        .with_icon(Arc::new(icon));
+        .with_icon(Arc::new(icon))
+        // tray-only start: create the window invisible (hiding it later loses to its first paint)
+        .with_visible(!start_hidden);
     // SIDECHAIN_WINDOW_SIZE=w,h for full-page screenshots
     if let Some((w, h)) = std::env::var("SIDECHAIN_WINDOW_SIZE").ok().and_then(|v| {
         let (a, b) = v.split_once(',')?;
