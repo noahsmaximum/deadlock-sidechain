@@ -17,13 +17,23 @@ Set-Location $repo
 foreach ($need in "models\htdemucs_fwd_fp16.onnx", "dist\sidechain-hook.vpk") {
     if (-not (Test-Path $need)) { Write-Warning "$need missing: it won't be embedded" }
 }
+# Keep this machine's paths (user folder, cargo registry, repo) out of the exe: remap the source
+# paths baked into panic messages and drop the PDB's directory. Own target dir, so dev builds
+# (run.bat, plain cargo) keep their cache.
+$cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $env:USERPROFILE ".cargo" }
+$flags = @("--remap-path-prefix=$cargoHome=cargo", "--remap-path-prefix=$repo=sidechain",
+           "-Clink-arg=/PDBALTPATH:%_PDB%")
+$env:CARGO_ENCODED_RUSTFLAGS = $flags -join [char]0x1f
 # cargo reports progress on stderr, which Windows PowerShell would turn into a terminating error
 $ErrorActionPreference = "Continue"
-cargo build --release
+cargo build --release --target-dir target\package
 $ErrorActionPreference = "Stop"
+Remove-Item Env:\CARGO_ENCODED_RUSTFLAGS
 if ($LASTEXITCODE -ne 0) { throw "build failed" }
 New-Item -ItemType Directory -Force dist | Out-Null
-Copy-Item target\release\sidechain.exe dist\Sidechain.exe -Force
+Copy-Item target\package\release\sidechain.exe dist\Sidechain.exe -Force
+$leaks = Select-String -Path dist\Sidechain.exe -Pattern $env:USERPROFILE -SimpleMatch -List
+if ($leaks) { Write-Warning "dist\Sidechain.exe still contains $env:USERPROFILE" }
 $mb = [math]::Round((Get-Item dist\Sidechain.exe).Length / 1MB)
 Write-Output "==> dist\Sidechain.exe ($mb MB)"
 

@@ -8,6 +8,9 @@
         .\build_addon.ps1          # sync + compile + pack (safe while the game is running)
         .\build_addon.ps1 -Deploy  # ...and overwrite every installed copy (Mod Manager profiles). GAME MUST BE CLOSED.
 
+    Needs the Deadlock CSDK: -CsdkRoot, else $env:CSDK_ROOT, else a Reduced_CSDK_12 folder next to this repo.
+    -Deploy finds the game's addons folder through Steam (override: -Addons or $env:DEADLOCK_ADDONS).
+
     Footguns (from the cinema-cam / boss-rush builds):
       * Compile each source in its OWN resourcecompiler invocation; tight batches silently drop files.
       * The layout override is the CURRENT game's citadel_hud_top_bar.xml + one <scripts> include.
@@ -17,11 +20,30 @@
 [CmdletBinding()]
 param(
     [switch]$Deploy,
-    [string]$CsdkRoot = "C:\Users\Noah\Projects\Reduced_CSDK_12",
-    [string]$Addons   = "F:\I Drive\SteamLibrary\steamapps\common\Deadlock\game\citadel\addons"
+    [string]$CsdkRoot = $env:CSDK_ROOT,
+    [string]$Addons   = $env:DEADLOCK_ADDONS
 )
 
 $ErrorActionPreference = "Stop"
+if (-not $CsdkRoot) { $CsdkRoot = Join-Path (Split-Path $PSScriptRoot -Parent) "Reduced_CSDK_12" }
+
+# <library>\steamapps\common\Deadlock\game\citadel\addons, via Steam's registry key + libraryfolders.vdf
+function Find-DeadlockAddons {
+    $steam = (Get-ItemProperty "HKCU:\Software\Valve\Steam" -ErrorAction SilentlyContinue).SteamPath
+    if (-not $steam) { return $null }
+    $libs = @($steam)
+    $vdf = Join-Path $steam "steamapps\libraryfolders.vdf"
+    if (Test-Path $vdf) {
+        foreach ($m in [regex]::Matches((Get-Content $vdf -Raw), '"path"\s+"([^"]+)"')) {
+            $libs += $m.Groups[1].Value.Replace('\\', '\')
+        }
+    }
+    foreach ($l in $libs) {
+        $a = Join-Path $l "steamapps\common\Deadlock\game\citadel\addons"
+        if (Test-Path $a) { return $a }
+    }
+    return $null
+}
 $AddonName = "sidechain"
 $Src       = Join-Path $PSScriptRoot "addon"
 $Content   = Join-Path $CsdkRoot "content\citadel_addons\$AddonName"
@@ -69,6 +91,8 @@ if (-not $Deploy) {
 if (Get-Process -Name "deadlock" -ErrorAction SilentlyContinue) {
     throw "Deadlock is running. Close it first: installed VPKs are file-locked while the game is up."
 }
+if (-not $Addons) { $Addons = Find-DeadlockAddons }
+if (-not $Addons -or -not (Test-Path $Addons)) { throw "Deadlock's addons folder not found: pass -Addons <...\game\citadel\addons>" }
 # Every installed copy = any addon VPK that contains our script (Mod Manager renames/copies them).
 # Only small VPKs can be ours (~20 KB); the addons folder can hold many GB of other mods.
 $needle = [Text.Encoding]::ASCII.GetBytes("sidechain_hook")
