@@ -156,3 +156,9 @@ Console keys (console focused): `b` bypass · `w` open window · `v` status line
 - **Effects too subtle / too much:** use the Intensity slider, or the Subtle / Club presets.
 - **After a Deadlock patch:** re-decompile `panorama/layout/citadel_hud_top_bar.vxml_c` and
   re-apply the one `<scripts>` include (see `build_addon.ps1`).
+
+## License
+
+MIT (see `LICENSE`). The built-in neural model, ONNX Runtime, DirectML, fonts and Rust crates keep
+their own licenses, and the addon's HUD layout is Valve's: see `THIRD_PARTY_NOTICES.md`. Not
+affiliated with Valve or Spotify.
