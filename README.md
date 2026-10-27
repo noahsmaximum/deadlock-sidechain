@@ -13,7 +13,9 @@ It works in normal matchmaking: client-side only, with no server plugin and no m
 ## Install
 
 1. **The app:** `Sidechain.exe` is the whole thing. The neural model, DirectML and the hook addon
-   are built in. Build and install it with `.\tools\package.ps1 -Install`, which:
+   are built in. Download it from [Releases](https://github.com/noahsmaximum/deadlock-sidechain/releases)
+   and put it anywhere (Windows may warn that it's unsigned: More info → Run anyway). Or build and
+   install it with `.\tools\package.ps1 -Install`, which:
    - puts it in `%LOCALAPPDATA%\Programs\Sidechain`
    - adds a Start menu entry
    - copies this repo's settings to `%APPDATA%\Sidechain`, where the app keeps its settings and presets
