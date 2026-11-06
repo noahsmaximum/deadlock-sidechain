@@ -45,11 +45,11 @@ impl App {
                 ui.label("");
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(icon::MOON_STARS).color(CALM));
-                    ui.label(RichText::new("Calm").font(semi(13.0)).color(CALM));
+                    ui.label(RichText::new("CALM").font(oracle(12.5)).color(CALM).extra_letter_spacing(1.2));
                 });
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(icon::FIRE).color(ACCENT));
-                    ui.label(RichText::new("Full energy").font(semi(13.0)).color(ACCENT));
+                    ui.label(RichText::new("FULL ENERGY").font(oracle(12.5)).color(ACCENT).extra_letter_spacing(1.2));
                 });
                 ui.end_row();
                 for p in TONE {

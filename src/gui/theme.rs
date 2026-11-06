@@ -1,5 +1,7 @@
-//! Look and feel: palette, fonts (Segoe UI + Phosphor icons), and the small widget kit the pages
-//! are built from (cards, toggles, segmented controls, a two-handle range slider, meters).
+//! Look and feel, styled after Deadlock's own UI: its fonts (Radiance, Reaver, VALVE Oracle, read
+//! from the player's Deadlock install, never shipped), warm off-white on off-black, Amber / Sapphire
+//! for full / calm, brand green for "on". Plus the small widget kit the pages are built from (cards,
+//! toggles, segmented controls, a two-handle range slider, meters).
 
 use eframe::egui::{
     self, Align2, Color32, CornerRadius, FontFamily, FontId, Pos2, Rect, Response, RichText, Sense, Stroke, StrokeKind, Ui, Vec2, pos2, vec2,
@@ -9,20 +11,23 @@ pub use egui_phosphor::regular as icon;
 
 // ---------------------------------------------------------------------------- palette
 
-pub const BG: Color32 = Color32::from_rgb(14, 15, 19);
-pub const RAIL: Color32 = Color32::from_rgb(19, 20, 25);
-pub const SURFACE: Color32 = Color32::from_rgb(24, 26, 32);
-pub const SURFACE_2: Color32 = Color32::from_rgb(32, 35, 43);
-pub const SURFACE_3: Color32 = Color32::from_rgb(44, 48, 58);
-pub const BORDER: Color32 = Color32::from_rgb(36, 39, 47);
-pub const TEXT: Color32 = Color32::from_rgb(232, 234, 238);
-pub const TEXT_2: Color32 = Color32::from_rgb(156, 162, 174);
-pub const TEXT_3: Color32 = Color32::from_rgb(104, 110, 122);
-pub const ACCENT: Color32 = Color32::from_rgb(240, 168, 48); // brass: full energy
-pub const CALM: Color32 = Color32::from_rgb(92, 142, 232); // blue: calm
-pub const GOOD: Color32 = Color32::from_rgb(92, 200, 128);
-pub const WARN: Color32 = Color32::from_rgb(236, 190, 80);
-pub const BAD: Color32 = Color32::from_rgb(232, 96, 84);
+pub const BG: Color32 = Color32::from_rgb(13, 15, 12); // Deadlock's offBlack, a touch deeper
+pub const RAIL: Color32 = Color32::from_rgb(18, 20, 16);
+pub const DEEP: Color32 = Color32::from_rgb(16, 18, 14); // wells: plots, logs, handles
+pub const SURFACE: Color32 = Color32::from_rgb(24, 26, 21);
+pub const SURFACE_2: Color32 = Color32::from_rgb(34, 36, 30);
+pub const SURFACE_3: Color32 = Color32::from_rgb(48, 50, 42);
+pub const BORDER: Color32 = Color32::from_rgb(50, 49, 41);
+pub const TEXT: Color32 = Color32::from_rgb(255, 239, 215); // offWhite #FFEFD7
+pub const TEXT_2: Color32 = Color32::from_rgb(186, 174, 154);
+pub const TEXT_3: Color32 = Color32::from_rgb(126, 119, 105);
+pub const ACCENT: Color32 = Color32::from_rgb(238, 190, 100); // Amber: full energy
+pub const CALM: Color32 = Color32::from_rgb(112, 148, 232); // Sapphire: calm
+pub const GOOD: Color32 = Color32::from_rgb(95, 230, 158); // brandGreen #5FE69E
+pub const WARN: Color32 = Color32::from_rgb(255, 214, 110);
+pub const BAD: Color32 = Color32::from_rgb(238, 89, 69); // warningRed #EE5945
+/// Text on an Amber / green fill.
+pub const INK: Color32 = Color32::from_rgb(26, 20, 10);
 
 pub fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
     let t = t.clamp(0.0, 1.0);
@@ -30,7 +35,7 @@ pub fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
     Color32::from_rgb(l(a.r(), b.r()), l(a.g(), b.g()), l(a.b(), b.b()))
 }
 
-/// The energy gradient: calm blue -> brass.
+/// The energy gradient: calm Sapphire -> Amber.
 pub fn energy_color(t: f32) -> Color32 {
     lerp_color(CALM, ACCENT, t)
 }
@@ -38,30 +43,58 @@ pub fn energy_color(t: f32) -> Color32 {
 // ---------------------------------------------------------------------------- fonts / style
 
 const SEMI: &str = "semibold";
+const DISPLAY: &str = "display";
+const ORACLE: &str = "oracle";
 
 pub fn semi(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name(SEMI.into()))
 }
 
-/// Segoe UI from Windows (falls back to egui's own fonts if it can't be read) + Phosphor icons.
+/// Deadlock's serif (Reaver): page titles, names, the big numbers.
+pub fn display(size: f32) -> FontId {
+    FontId::new(size, FontFamily::Name(DISPLAY.into()))
+}
+
+/// Deadlock's heading face (VALVE Oracle): section heads, nav, labels. Use upper case.
+pub fn oracle(size: f32) -> FontId {
+    FontId::new(size, FontFamily::Name(ORACLE.into()))
+}
+
+/// Deadlock's fonts from the game's own folder (`citadel/panorama/fonts`), so nothing of Valve's
+/// is redistributed; without Deadlock, Segoe UI / Georgia from Windows. Phosphor for icons.
 fn fonts(ctx: &egui::Context) {
     let mut f = egui::FontDefinitions::default();
     egui_phosphor::add_to_fonts(&mut f, egui_phosphor::Variant::Regular);
-    let dir = std::path::Path::new(r"C:\Windows\Fonts");
-    let load = |name: &str| std::fs::read(dir.join(name)).ok();
+    let game = crate::system::deadlock_game_dir().map(|g| g.join("citadel").join("panorama").join("fonts"));
+    let win = std::path::Path::new(r"C:\Windows\Fonts");
+    let mut load = |key: &str, files: &[&str]| -> Option<String> {
+        for name in files {
+            for d in game.iter().map(|d| d.as_path()).chain(std::iter::once(win)) {
+                if let Ok(b) = std::fs::read(d.join(name)) {
+                    f.font_data.insert(key.into(), egui::FontData::from_owned(b).into());
+                    return Some(key.into());
+                }
+            }
+        }
+        None
+    };
+    let body = load("body", &["radiance-regular.otf", "segoeui.ttf"]);
+    let body_sb = load("body_sb", &["radiance-semibold.otf", "seguisb.ttf"]);
+    let disp = load("display", &["reaver-semibold.otf", "georgiab.ttf"]);
+    let orc = load("oracle", &["valveoracle-semibold.ttf", "seguisb.ttf"]);
+    // Segoe UI right behind Deadlock's faces, for the symbols they lack (arrows, dashes, ...)
+    let segoe = load("segoe", &["segoeui.ttf"]);
     let base = f.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
-    let mut semi_fam = base.clone();
-    if let Some(b) = load("segoeui.ttf") {
-        f.font_data.insert("segoe".into(), egui::FontData::from_owned(b).into());
-        f.families.get_mut(&FontFamily::Proportional).unwrap().insert(0, "segoe".into());
-    }
-    if let Some(b) = load("seguisb.ttf") {
-        f.font_data.insert("segoe_sb".into(), egui::FontData::from_owned(b).into());
-        semi_fam.insert(0, "segoe_sb".into());
-    } else if f.font_data.contains_key("segoe") {
-        semi_fam.insert(0, "segoe".into());
-    }
-    f.families.insert(FontFamily::Name(SEMI.into()), semi_fam);
+    let fam = |first: Option<String>, then: Option<String>| -> Vec<String> {
+        let mut v: Vec<String> = first.into_iter().chain(then).chain(segoe.clone()).collect();
+        v.dedup();
+        v.extend(base.iter().cloned());
+        v
+    };
+    f.families.insert(FontFamily::Proportional, fam(body.clone(), None));
+    f.families.insert(FontFamily::Name(SEMI.into()), fam(body_sb.clone(), body.clone()));
+    f.families.insert(FontFamily::Name(DISPLAY.into()), fam(disp, body_sb.clone()));
+    f.families.insert(FontFamily::Name(ORACLE.into()), fam(orc, body_sb));
     ctx.set_fonts(f);
 }
 
@@ -71,20 +104,20 @@ pub fn install(ctx: &egui::Context) {
     v.panel_fill = BG;
     v.window_fill = SURFACE;
     v.window_stroke = Stroke::new(1.0, BORDER);
-    v.window_corner_radius = CornerRadius::same(12);
-    v.menu_corner_radius = CornerRadius::same(10);
-    v.extreme_bg_color = Color32::from_rgb(11, 12, 15);
-    v.faint_bg_color = Color32::from_rgb(20, 22, 27);
-    v.selection.bg_fill = ACCENT.linear_multiply(0.85);
+    v.window_corner_radius = CornerRadius::same(4);
+    v.menu_corner_radius = CornerRadius::same(4);
+    v.extreme_bg_color = DEEP;
+    v.faint_bg_color = Color32::from_rgb(20, 22, 18);
+    v.selection.bg_fill = ACCENT.linear_multiply(0.45);
     v.selection.stroke = Stroke::new(1.0, ACCENT);
     v.hyperlink_color = ACCENT;
     v.slider_trailing_fill = true;
     v.override_text_color = Some(TEXT);
-    let r = CornerRadius::same(7);
+    let r = CornerRadius::same(3);
     for (w, fill, stroke) in [
         (&mut v.widgets.noninteractive, SURFACE, BORDER),
         (&mut v.widgets.inactive, SURFACE_2, SURFACE_2),
-        (&mut v.widgets.hovered, SURFACE_3, Color32::from_rgb(70, 75, 88)),
+        (&mut v.widgets.hovered, SURFACE_3, TEXT.gamma_multiply(0.22)),
         (&mut v.widgets.active, SURFACE_3, ACCENT.linear_multiply(0.7)),
         (&mut v.widgets.open, SURFACE_3, SURFACE_3),
     ] {
@@ -103,10 +136,10 @@ pub fn install(ctx: &egui::Context) {
     ctx.style_mut(|s| {
         use egui::TextStyle::*;
         s.text_styles = [
-            (Heading, semi(22.0)),
-            (Body, FontId::proportional(13.5)),
-            (Button, FontId::proportional(13.5)),
-            (Small, FontId::proportional(11.5)),
+            (Heading, display(22.0)),
+            (Body, FontId::proportional(14.0)),
+            (Button, FontId::proportional(14.0)),
+            (Small, FontId::proportional(12.0)),
             (Monospace, FontId::monospace(12.5)),
         ]
         .into();
@@ -114,17 +147,24 @@ pub fn install(ctx: &egui::Context) {
         s.spacing.button_padding = vec2(10.0, 5.0);
         s.spacing.interact_size = vec2(36.0, 26.0);
         s.spacing.slider_width = 200.0;
-        s.spacing.slider_rail_height = 4.0;
+        s.spacing.slider_rail_height = 3.0;
         s.spacing.combo_width = 160.0;
-        s.visuals.handle_shape = egui::style::HandleShape::Circle;
+        // Deadlock's sliders: a thin rail and an upright notch, not a knob
+        s.visuals.handle_shape = egui::style::HandleShape::Rect { aspect_ratio: 0.45 };
         s.interaction.tooltip_delay = 0.35;
     });
 }
 
 // ---------------------------------------------------------------------------- text helpers
 
+/// A name in Deadlock's serif.
 pub fn title(text: &str, size: f32) -> RichText {
-    RichText::new(text).font(semi(size)).color(TEXT)
+    RichText::new(text).font(display(size)).color(TEXT)
+}
+
+/// An upper-case heading in VALVE Oracle, tracked out the way Deadlock sets them.
+pub fn heading(text: &str, size: f32) -> RichText {
+    RichText::new(text.to_uppercase()).font(oracle(size)).color(TEXT).extra_letter_spacing(size * 0.09)
 }
 
 pub fn muted(text: impl Into<String>) -> RichText {
@@ -137,22 +177,69 @@ pub fn caption(text: impl Into<String>) -> RichText {
 
 /// Small uppercase label above a group of controls.
 pub fn eyebrow(ui: &mut Ui, text: &str) {
-    ui.label(RichText::new(text.to_uppercase()).font(semi(10.5)).color(TEXT_3).extra_letter_spacing(0.6));
+    ui.label(RichText::new(text.to_uppercase()).font(oracle(11.0)).color(TEXT_3).extra_letter_spacing(1.3));
 }
 
 // ---------------------------------------------------------------------------- containers
 
+/// A panel: flat, square-cornered, a hairline border with Amber corner brackets.
 pub fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
-    egui::Frame::new()
+    let r = egui::Frame::new()
         .fill(SURFACE)
         .stroke(Stroke::new(1.0, BORDER))
-        .corner_radius(CornerRadius::same(12))
+        .corner_radius(CornerRadius::same(3))
         .inner_margin(egui::Margin::same(16))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             add(ui)
-        })
-        .inner
+        });
+    brackets(ui.painter(), r.response.rect.shrink(3.0), 8.0, Stroke::new(1.5, ACCENT.gamma_multiply(0.5)));
+    r.inner
+}
+
+/// Art-deco corner brackets just inside `rect`.
+pub fn brackets(p: &egui::Painter, rect: Rect, len: f32, stroke: Stroke) {
+    let r = rect.shrink(0.5);
+    for (c, dx, dy) in [(r.left_top(), 1.0, 1.0), (r.right_top(), -1.0, 1.0), (r.left_bottom(), 1.0, -1.0), (r.right_bottom(), -1.0, -1.0)] {
+        p.line_segment([c, c + vec2(len * dx, 0.0)], stroke);
+        p.line_segment([c, c + vec2(0.0, len * dy)], stroke);
+    }
+}
+
+/// A hairline rule with a small Amber diamond at its start, under a page title.
+pub fn rule(ui: &mut Ui) {
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 9.0), Sense::hover());
+    let p = ui.painter();
+    let y = rect.center().y;
+    let c = pos2(rect.left() + 4.5, y);
+    p.line_segment([pos2(rect.left() + 12.0, y), pos2(rect.right(), y)], Stroke::new(1.0, BORDER));
+    p.line_segment([pos2(rect.left() + 12.0, y), pos2(rect.left() + 140.0, y)], Stroke::new(1.0, ACCENT.gamma_multiply(0.45)));
+    let d = 4.0;
+    p.add(egui::Shape::convex_polygon(vec![c + vec2(0.0, -d), c + vec2(d, 0.0), c + vec2(0.0, d), c + vec2(-d, 0.0)], ACCENT, Stroke::NONE));
+}
+
+/// Fine paper grain over `rect` (Deadlock's menus sit on a paper texture).
+pub fn grain(ui: &Ui, rect: Rect, alpha: u8) {
+    let ctx = ui.ctx();
+    let id = egui::Id::new("sidechain_grain");
+    let tex = ctx.data(|d| d.get_temp::<egui::TextureHandle>(id)).unwrap_or_else(|| {
+        let n = 192usize;
+        let mut seed = 0x9e37_79b9u32;
+        let mut px = Vec::with_capacity(n * n);
+        for _ in 0..n * n {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            px.push(Color32::from_white_alpha(((seed >> 24) as u8) / 22));
+        }
+        let img = egui::ColorImage { size: [n, n], pixels: px, source_size: vec2(n as f32, n as f32) };
+        let opts = egui::TextureOptions { wrap_mode: egui::TextureWrapMode::Repeat, ..egui::TextureOptions::NEAREST };
+        let t = ctx.load_texture("grain", img, opts);
+        ctx.data_mut(|d| d.insert_temp(id, t.clone()));
+        t
+    });
+    let uv = Rect::from_min_size(Pos2::ZERO, rect.size() / 192.0);
+    ui.painter().image(tex.id(), rect, uv, Color32::from_white_alpha(alpha));
 }
 
 /// Icon + title (+ an optional one-line explanation) at the top of a card.
@@ -164,12 +251,12 @@ pub fn card_head(ui: &mut Ui, glyph: &str, heading: &str, sub: Option<&str>) {
 pub fn card_head_with(ui: &mut Ui, glyph: &str, heading: &str, sub: Option<&str>, right: impl FnOnce(&mut Ui)) {
     ui.horizontal(|ui| {
         ui.label(RichText::new(glyph).size(17.0).color(ACCENT));
-        ui.label(title(heading, 15.0));
+        ui.label(self::heading(heading, 14.0));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), right);
     });
     if let Some(s) = sub {
-        ui.add_space(-4.0);
-        ui.label(RichText::new(s).size(12.0).color(TEXT_2));
+        ui.add_space(-3.0);
+        ui.label(RichText::new(s).size(12.5).color(TEXT_2));
     }
     ui.add_space(6.0);
 }
@@ -185,25 +272,26 @@ pub fn toggle(ui: &mut Ui, on: &mut bool) -> Response {
     }
     let t = ui.ctx().animate_bool(resp.id, *on);
     let p = ui.painter();
-    let bg = lerp_color(SURFACE_3, ACCENT, t);
+    let bg = lerp_color(SURFACE_3, GOOD.gamma_multiply(0.85), t);
     p.rect_filled(rect, CornerRadius::same(10), if resp.hovered() { bg.gamma_multiply(1.12) } else { bg });
+    p.rect_stroke(rect, CornerRadius::same(10), Stroke::new(1.0, TEXT.gamma_multiply(0.12)), StrokeKind::Inside);
     let x = egui::lerp((rect.left() + 10.0)..=(rect.right() - 10.0), t);
-    p.circle_filled(pos2(x, rect.center().y), 7.5, if *on { Color32::from_rgb(24, 20, 12) } else { TEXT });
+    p.circle_filled(pos2(x, rect.center().y), 7.0, if *on { INK } else { TEXT });
     resp
 }
 
 /// A row of mutually exclusive options in one pill.
 pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, opts: &[(T, &str)]) -> bool {
     let mut changed = false;
-    egui::Frame::new().fill(SURFACE_2).corner_radius(CornerRadius::same(8)).inner_margin(egui::Margin::same(3)).show(ui, |ui| {
+    egui::Frame::new().fill(SURFACE_2).stroke(Stroke::new(1.0, BORDER)).corner_radius(CornerRadius::same(3)).inner_margin(egui::Margin::same(3)).show(ui, |ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
         ui.horizontal(|ui| {
             for (v, label) in opts {
                 let sel = *value == *v;
-                let b = egui::Button::new(RichText::new(*label).color(if sel { Color32::from_rgb(24, 20, 12) } else { TEXT_2 }))
+                let b = egui::Button::new(RichText::new(*label).font(if sel { semi(13.5) } else { FontId::proportional(13.5) }).color(if sel { INK } else { TEXT_2 }))
                     .fill(if sel { ACCENT } else { Color32::TRANSPARENT })
                     .stroke(Stroke::NONE)
-                    .corner_radius(CornerRadius::same(6))
+                    .corner_radius(CornerRadius::same(2))
                     .min_size(vec2(0.0, 24.0));
                 if ui.add(b).clicked() && !sel {
                     *value = *v;
@@ -222,12 +310,16 @@ pub fn icon_button(ui: &mut Ui, glyph: &str, tip: &str) -> Response {
 }
 
 pub fn primary_button(ui: &mut Ui, text: &str) -> Response {
-    let b = egui::Button::new(RichText::new(text).font(semi(13.5)).color(Color32::from_rgb(24, 20, 12))).fill(ACCENT).stroke(Stroke::NONE).min_size(vec2(0.0, 28.0));
+    let b = egui::Button::new(RichText::new(text.to_uppercase()).font(oracle(13.0)).color(INK).extra_letter_spacing(1.0))
+        .fill(ACCENT)
+        .stroke(Stroke::new(1.0, TEXT.gamma_multiply(0.35)))
+        .corner_radius(CornerRadius::same(2))
+        .min_size(vec2(0.0, 30.0));
     ui.add(b)
 }
 
 pub fn ghost_button(ui: &mut Ui, text: impl Into<egui::WidgetText>) -> Response {
-    ui.add(egui::Button::new(text).fill(SURFACE_2).stroke(Stroke::NONE).min_size(vec2(0.0, 28.0)))
+    ui.add(egui::Button::new(text).fill(SURFACE_2).stroke(Stroke::new(1.0, BORDER)).corner_radius(CornerRadius::same(2)).min_size(vec2(0.0, 28.0)))
 }
 
 /// Two handles on one 0..1 track (the slice of energy a stem fades in over). `marker` draws the
@@ -261,7 +353,7 @@ pub fn range_slider(ui: &mut Ui, lo: &mut f32, hi: &mut f32, width: f32, marker:
     }
     let p = ui.painter();
     let dim = if enabled { 1.0 } else { 0.35 };
-    p.rect_filled(track, CornerRadius::same(3), SURFACE_3);
+    p.rect_filled(track, CornerRadius::same(1), SURFACE_3);
     // the active slice, coloured by where it sits on the calm -> full gradient
     let n = 24;
     for i in 0..n {
@@ -275,9 +367,9 @@ pub fn range_slider(ui: &mut Ui, lo: &mut f32, hi: &mut f32, width: f32, marker:
         p.line_segment([pos2(x, rect.top() + 2.0), pos2(x, rect.bottom() - 2.0)], Stroke::new(2.0, TEXT.gamma_multiply(0.85 * dim)));
     }
     for v in [*lo, *hi] {
-        let c = pos2(x_of(v), track.center().y);
-        p.circle_filled(c, 8.0, Color32::from_rgb(20, 21, 26).gamma_multiply(dim.max(0.6)));
-        p.circle_stroke(c, 8.0, Stroke::new(2.0, energy_color(v).gamma_multiply(dim)));
+        let n = Rect::from_center_size(pos2(x_of(v), track.center().y), vec2(9.0, 20.0));
+        p.rect_filled(n, CornerRadius::same(2), DEEP.gamma_multiply(dim.max(0.6)));
+        p.rect_stroke(n, CornerRadius::same(2), Stroke::new(2.0, energy_color(v).gamma_multiply(dim)), StrokeKind::Inside);
     }
     if enabled && resp.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
@@ -289,7 +381,7 @@ pub fn range_slider(ui: &mut Ui, lo: &mut f32, hi: &mut f32, width: f32, marker:
 pub fn meter(ui: &mut Ui, v: f32, size: Vec2, color: Color32) -> Response {
     let (rect, resp) = ui.allocate_exact_size(size, Sense::hover());
     let p = ui.painter();
-    let r = CornerRadius::same((size.y / 2.0).min(4.0) as u8);
+    let r = CornerRadius::same((size.y / 2.0).min(2.0) as u8);
     p.rect_filled(rect, r, SURFACE_3);
     let mut f = rect;
     f.set_width(rect.width() * v.clamp(0.0, 1.0));
@@ -303,7 +395,7 @@ pub fn meter(ui: &mut Ui, v: f32, size: Vec2, color: Color32) -> Response {
 pub fn energy_bar(ui: &mut Ui, v: f32, size: Vec2, ticks: &[(f32, &str)]) -> Response {
     let (rect, resp) = ui.allocate_exact_size(size, Sense::hover());
     let p = ui.painter();
-    let r = CornerRadius::same((size.y / 2.0).min(8.0) as u8);
+    let r = CornerRadius::same(2);
     p.rect_filled(rect, r, SURFACE_3);
     let n = 64;
     let mut fill = Vec::new();
@@ -323,8 +415,9 @@ pub fn energy_bar(ui: &mut Ui, v: f32, size: Vec2, ticks: &[(f32, &str)]) -> Res
     for (t, label) in ticks {
         let x = rect.left() + rect.width() * t;
         p.line_segment([pos2(x, rect.top() - 3.0), pos2(x, rect.bottom() + 3.0)], Stroke::new(1.0, TEXT.gamma_multiply(0.45)));
-        p.text(pos2(x + 4.0, rect.bottom() + 4.0), Align2::LEFT_TOP, *label, FontId::proportional(11.0), TEXT_3);
+        p.text(pos2(x + 4.0, rect.bottom() + 4.0), Align2::LEFT_TOP, label.to_uppercase(), oracle(10.0), TEXT_3);
     }
+    p.rect_stroke(rect, r, Stroke::new(1.0, TEXT.gamma_multiply(0.1)), StrokeKind::Inside);
     resp
 }
 
@@ -334,29 +427,32 @@ pub fn vmeter(ui: &mut Ui, gain: f32, activity: f32, size: Vec2, color: Color32)
     let p = ui.painter();
     let bar = Rect::from_min_max(rect.min, pos2(rect.right() - 7.0, rect.bottom()));
     let act = Rect::from_min_max(pos2(rect.right() - 4.0, rect.top()), rect.max);
-    p.rect_filled(bar, CornerRadius::same(5), SURFACE_3);
-    p.rect_filled(act, CornerRadius::same(2), SURFACE_3);
+    p.rect_filled(bar, CornerRadius::same(2), SURFACE_3);
+    p.rect_filled(act, CornerRadius::same(1), SURFACE_3);
     let up = |r: Rect, v: f32| Rect::from_min_max(pos2(r.left(), r.bottom() - r.height() * v.clamp(0.0, 1.0)), r.max);
     if gain > 0.002 {
-        p.rect_filled(up(bar, gain), CornerRadius::same(5), color);
+        p.rect_filled(up(bar, gain), CornerRadius::same(2), color);
     }
     if activity > 0.002 {
-        p.rect_filled(up(act, activity), CornerRadius::same(2), TEXT_2);
+        p.rect_filled(up(act, activity), CornerRadius::same(1), TEXT_2);
     }
     resp
 }
 
 pub fn dot(ui: &mut Ui, color: Color32) {
     let (r, _) = ui.allocate_exact_size(vec2(10.0, 14.0), Sense::hover());
-    ui.painter().circle_filled(r.center(), 4.0, color);
+    // a small diamond, Deadlock's status pip
+    let c = r.center();
+    ui.painter().add(egui::Shape::convex_polygon(vec![c + vec2(0.0, -4.5), c + vec2(4.5, 0.0), c + vec2(0.0, 4.5), c + vec2(-4.5, 0.0)], color, Stroke::NONE));
 }
 
 /// Rounded tag with optional colour.
 pub fn chip(ui: &mut Ui, text: &str, color: Color32) -> Response {
-    let galley = ui.painter().layout_no_wrap(text.to_string(), FontId::proportional(11.5), color);
+    let galley = ui.painter().layout_no_wrap(text.to_string(), FontId::proportional(12.0), color);
     let size = galley.size() + vec2(14.0, 6.0);
     let (rect, resp) = ui.allocate_exact_size(size, Sense::hover());
-    ui.painter().rect_filled(rect, CornerRadius::same((size.y / 2.0) as u8), SURFACE_2);
+    ui.painter().rect_filled(rect, CornerRadius::same(2), SURFACE_2);
+    ui.painter().rect_stroke(rect, CornerRadius::same(2), Stroke::new(1.0, color.gamma_multiply(0.22)), StrokeKind::Inside);
     ui.painter().galley(rect.center() - galley.size() / 2.0, galley, color);
     resp
 }
@@ -366,14 +462,14 @@ pub fn eq_plot(ui: &mut Ui, freqs: &[f32], curves: &[(Vec<f32>, Stroke)], height
     let w = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(vec2(w, height), Sense::hover());
     let p = ui.painter_at(rect);
-    p.rect_filled(rect, CornerRadius::same(8), Color32::from_rgb(16, 17, 21));
+    p.rect_filled(rect, CornerRadius::same(2), DEEP);
     let (db_top, db_bot) = (12.0f32, -30.0f32);
     let x_of = |f: f32| rect.left() + rect.width() * ((f / 20.0).log10() / 3.0);
     let y_of = |db: f32| rect.top() + rect.height() * ((db_top - db.clamp(db_bot, db_top)) / (db_top - db_bot));
-    let grid = Stroke::new(1.0, Color32::from_gray(32));
+    let grid = Stroke::new(1.0, Color32::from_rgb(34, 35, 29));
     for db in [6.0, 0.0, -6.0, -12.0, -18.0, -24.0] {
         let y = y_of(db);
-        p.line_segment([Pos2::new(rect.left(), y), Pos2::new(rect.right(), y)], if db == 0.0 { Stroke::new(1.0, Color32::from_gray(58)) } else { grid });
+        p.line_segment([Pos2::new(rect.left(), y), Pos2::new(rect.right(), y)], if db == 0.0 { Stroke::new(1.0, Color32::from_rgb(64, 62, 52)) } else { grid });
         if db == 0.0 || db == -12.0 || db == -24.0 {
             p.text(Pos2::new(rect.left() + 6.0, y - 1.0), Align2::LEFT_BOTTOM, format!("{db:+.0} dB"), FontId::proportional(10.0), TEXT_3);
         }
@@ -389,7 +485,7 @@ pub fn eq_plot(ui: &mut Ui, freqs: &[f32], curves: &[(Vec<f32>, Stroke)], height
         let pts: Vec<Pos2> = freqs.iter().zip(dbs).map(|(&f, &d)| Pos2::new(x_of(f), y_of(d))).collect();
         p.add(egui::Shape::line(pts, *stroke));
     }
-    p.rect_stroke(rect, CornerRadius::same(8), Stroke::new(1.0, BORDER), StrokeKind::Inside);
+    p.rect_stroke(rect, CornerRadius::same(2), Stroke::new(1.0, BORDER), StrokeKind::Inside);
 }
 
 /// Line swatch + label, for plot legends.

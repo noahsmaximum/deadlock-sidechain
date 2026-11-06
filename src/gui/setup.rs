@@ -1,6 +1,6 @@
 //! Setup: is everything connected, which devices, the stem engine, diagnostics, files.
 
-use eframe::egui::{self, Color32, RichText, Ui, vec2};
+use eframe::egui::{self, RichText, Ui, vec2};
 
 use super::theme::*;
 use super::{App, refresh_devices};
@@ -307,7 +307,7 @@ impl App {
                 )));
             });
             let open = egui::CollapsingHeader::new(RichText::new("Activity log").font(semi(13.0))).default_open(self.show_log).show(ui, |ui| {
-                egui::Frame::new().fill(Color32::from_rgb(16, 17, 21)).corner_radius(egui::CornerRadius::same(8)).inner_margin(egui::Margin::same(8)).show(ui, |ui| {
+                egui::Frame::new().fill(DEEP).corner_radius(egui::CornerRadius::same(2)).inner_margin(egui::Margin::same(8)).show(ui, |ui| {
                     egui::ScrollArea::vertical().max_height(260.0).stick_to_bottom(true).auto_shrink([false, true]).show(ui, |ui| {
                         for l in log_lines() {
                             ui.label(RichText::new(l).monospace().size(11.5).color(TEXT_2));

@@ -376,8 +376,11 @@ impl eframe::App for App {
             self.save_bar(ctx, dirty);
         }
         egui::CentralPanel::default().frame(egui::Frame::new().fill(BG).inner_margin(egui::Margin { left: 28, right: 28, top: 20, bottom: 12 })).show(ctx, |ui| {
+            grain(ui, ui.clip_rect(), 255);
             self.header(ui, &snap);
-            ui.add_space(14.0);
+            ui.add_space(4.0);
+            rule(ui);
+            ui.add_space(12.0);
             self.banners(ui);
             match self.page {
                 Page::Moments => self.page_moments(ui, &snap),
@@ -412,10 +415,11 @@ impl App {
             .resizable(false)
             .frame(egui::Frame::new().fill(RAIL).inner_margin(egui::Margin { left: 14, right: 14, top: 18, bottom: 14 }).stroke(Stroke::new(1.0, BORDER)))
             .show(ctx, |ui| {
+                grain(ui, ui.clip_rect(), 255);
                 ui.horizontal(|ui| {
                     ui.add_space(4.0);
                     ui.label(RichText::new(icon::WAVEFORM).size(22.0).color(ACCENT));
-                    ui.label(title("Sidechain", 18.0));
+                    ui.label(RichText::new("SIDECHAIN").font(display(19.0)).color(TEXT).extra_letter_spacing(2.2));
                 });
                 ui.add_space(22.0);
                 for (page, glyph, name, _) in Page::ALL {
@@ -430,7 +434,7 @@ impl App {
                     let r = egui::Frame::new()
                         .fill(SURFACE)
                         .stroke(Stroke::new(1.0, BORDER))
-                        .corner_radius(CornerRadius::same(10))
+                        .corner_radius(CornerRadius::same(3))
                         .inner_margin(egui::Margin::same(10))
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
@@ -459,8 +463,8 @@ impl App {
         let (_, _, name, sub) = Page::ALL.iter().find(|p| p.0 == self.page).copied().unwrap();
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
-                ui.label(title(name, 24.0));
-                ui.add_space(-6.0);
+                ui.label(RichText::new(name.to_uppercase()).font(display(30.0)).color(TEXT).extra_letter_spacing(2.4));
+                ui.add_space(-4.0);
                 ui.label(muted(sub));
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -469,13 +473,13 @@ impl App {
                 if toggle(ui, &mut on).on_hover_text("Turn the effects off to compare with the dry track (tray: Bypass)").changed() {
                     self.hub.send(Cmd::Bypass(!on));
                 }
-                ui.label(RichText::new("Effects").color(if on { TEXT } else { WARN }));
+                ui.label(RichText::new("EFFECTS").font(oracle(12.5)).extra_letter_spacing(1.1).color(if on { TEXT } else { WARN }));
                 ui.add_space(14.0);
                 ui.spacing_mut().slider_width = 110.0;
                 ui.add(egui::Slider::new(&mut self.draft.master.intensity, 0.0..=2.0).show_value(false))
                     .on_hover_text("Scales every move: 0% = dry, 100% = as designed, 200% = double");
                 ui.label(RichText::new(format!("{:.0}%", self.draft.master.intensity * 100.0)).monospace().color(TEXT_2));
-                ui.label("Intensity");
+                ui.label(RichText::new("INTENSITY").font(oracle(12.5)).extra_letter_spacing(1.1).color(TEXT));
                 ui.add_space(14.0);
                 self.preset_menu(ui);
             });
@@ -544,7 +548,7 @@ impl App {
             ui.horizontal(|ui| {
                 let ok = !name.trim().is_empty();
                 let enter = ok && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                if ui.add_enabled(ok, egui::Button::new(RichText::new("Save").font(semi(13.5)).color(Color32::from_rgb(24, 20, 12))).fill(ACCENT)).clicked() || enter {
+                if ui.add_enabled(ok, egui::Button::new(RichText::new("SAVE").font(oracle(13.0)).color(INK).extra_letter_spacing(1.0)).fill(ACCENT)).clicked() || enter {
                     let n = name.trim().to_string();
                     match presets::save_user(&self.preset_dir, &n, &self.draft.sound()) {
                         Ok(()) => {
@@ -573,7 +577,7 @@ impl App {
         if self.disk_changed {
             let mut load = false;
             let mut keep = false;
-            egui::Frame::new().fill(SURFACE).stroke(Stroke::new(1.0, WARN.gamma_multiply(0.5))).corner_radius(CornerRadius::same(10)).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
+            egui::Frame::new().fill(SURFACE).stroke(Stroke::new(1.0, WARN.gamma_multiply(0.5))).corner_radius(CornerRadius::same(3)).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(icon::FILE_TEXT).color(WARN));
                     ui.label("sidechain.toml changed on disk while you had unsaved edits.");
@@ -633,14 +637,27 @@ fn nav_item(ui: &mut Ui, glyph: &str, name: &str, selected: bool) -> egui::Respo
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::click());
     let p = ui.painter();
     if selected {
-        p.rect_filled(rect, CornerRadius::same(9), SURFACE_2);
-        p.rect_filled(egui::Rect::from_min_size(pos2(rect.left(), rect.top() + 10.0), vec2(3.0, 20.0)), CornerRadius::same(2), ACCENT);
+        // Deadlock's tab highlight: a warm wash fading out to the right, Amber edge
+        let wash = egui::Mesh {
+            indices: vec![0, 1, 2, 0, 2, 3],
+            vertices: [(rect.left_top(), 0.16), (rect.right_top(), 0.0), (rect.right_bottom(), 0.0), (rect.left_bottom(), 0.16)]
+                .map(|(pos, a)| egui::epaint::Vertex { pos, uv: egui::epaint::WHITE_UV, color: ACCENT.gamma_multiply(a) })
+                .to_vec(),
+            ..Default::default()
+        };
+        p.add(wash);
+        p.rect_filled(egui::Rect::from_min_size(rect.left_top(), vec2(3.0, rect.height())), CornerRadius::ZERO, ACCENT);
     } else if resp.hovered() {
-        p.rect_filled(rect, CornerRadius::same(9), SURFACE);
+        p.rect_filled(rect, CornerRadius::same(2), SURFACE);
     }
     let c = if selected { TEXT } else if resp.hovered() { TEXT } else { TEXT_2 };
     p.text(pos2(rect.left() + 16.0, rect.center().y), egui::Align2::LEFT_CENTER, glyph, egui::FontId::proportional(18.0), if selected { ACCENT } else { c });
-    p.text(pos2(rect.left() + 44.0, rect.center().y), egui::Align2::LEFT_CENTER, name, semi(14.0), c);
+    let label = ui.fonts(|f| {
+        let mut job = egui::text::LayoutJob::simple_singleline(name.to_uppercase(), oracle(14.0), c);
+        job.sections[0].format.extra_letter_spacing = 1.4;
+        f.layout_job(job)
+    });
+    p.galley(pos2(rect.left() + 44.0, rect.center().y - label.size().y / 2.0), label, c);
     if resp.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
@@ -649,7 +666,7 @@ fn nav_item(ui: &mut Ui, glyph: &str, name: &str, selected: bool) -> egui::Respo
 }
 
 fn banner(ui: &mut Ui, color: Color32, glyph: &str, text: &str) {
-    egui::Frame::new().fill(SURFACE).stroke(Stroke::new(1.0, color.gamma_multiply(0.5))).corner_radius(CornerRadius::same(10)).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
+    egui::Frame::new().fill(SURFACE).stroke(Stroke::new(1.0, color.gamma_multiply(0.5))).corner_radius(CornerRadius::same(3)).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(glyph).color(color));
@@ -664,7 +681,7 @@ fn banner(ui: &mut Ui, color: Color32, glyph: &str, text: &str) {
 pub fn run(hub: Arc<Hub>, start_hidden: bool) -> Result<()> {
     let icon = egui::IconData { rgba: icon_rgba(64), width: 64, height: 64 };
     let mut viewport = egui::ViewportBuilder::default()
-        .with_title("Sidechain")
+        .with_title(if std::env::var_os("SIDECHAIN_SHOT").is_some() { "Sidechain (shot)" } else { "Sidechain" })
         .with_inner_size([1120.0, 780.0])
         .with_min_inner_size([940.0, 600.0])
         .with_icon(Arc::new(icon))

@@ -1,7 +1,8 @@
 # Capture a window by title with PrintWindow (works off-screen, never steals focus).
-#   SIDECHAIN_WINDOW_POS=-4000,-4000 SIDECHAIN_TAB=now sidechain.exe ...   then
-#   powershell -File tools\shot.ps1 -Out shot.png
-param([string]$Title = "Sidechain", [string]$Out = "shot.png")
+#   SIDECHAIN_SHOT=1 SIDECHAIN_WINDOW_POS=-4000,-4000 SIDECHAIN_TAB=now sidechain.exe --config <sandbox> ...
+#   then  powershell -File tools\shot.ps1 -Out shot.png
+# SIDECHAIN_SHOT runs beside a running Sidechain (no single-instance hand-off) as "Sidechain (shot)".
+param([string]$Title = "Sidechain (shot)", [string]$Out = "shot.png")
 Add-Type -AssemblyName System.Drawing
 Add-Type @"
 using System;

@@ -223,7 +223,12 @@ fn real_main() -> Result<()> {
         None => {
             // one Sidechain at a time (two would fight over the music app); a second launch
             // brings the running one's window forward instead
-            let Some(_instance) = system::single_instance()? else { return Ok(()) };
+            // SIDECHAIN_SHOT (screenshots) runs beside a running Sidechain instead of raising it
+            let shot = std::env::var_os("SIDECHAIN_SHOT").is_some();
+            let instance = if shot { None } else { system::single_instance()? };
+            if !shot && instance.is_none() {
+                return Ok(());
+            }
             system::watch_session_end();
             let (path, cfg) = load()?;
             let for_secs = opt("--for").map(str::parse::<f32>).transpose()?;

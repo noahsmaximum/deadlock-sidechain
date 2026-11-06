@@ -42,7 +42,8 @@ a respawn and an objective.
 
 ## The settings window
 
-Four places, on the left:
+Styled after Deadlock's own menus, using the game's fonts straight from your Deadlock install
+(Windows fonts stand in without it). Four places, on the left:
 
 | Page | What's there |
 |---|---|

@@ -46,10 +46,10 @@ impl App {
                     eyebrow(ui, "Energy");
                     let (word, desc) = mood(energy);
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(format!("{:.0}%", energy * 100.0)).font(semi(40.0)).color(energy_color(energy)));
+                        ui.label(RichText::new(format!("{:.0}%", energy * 100.0)).font(display(46.0)).color(energy_color(energy)));
                     });
                     ui.add_space(-6.0);
-                    ui.label(RichText::new(word).font(semi(15.0)).color(TEXT));
+                    ui.label(RichText::new(word.to_uppercase()).font(oracle(14.0)).color(TEXT).extra_letter_spacing(1.3));
                     ui.label(RichText::new(desc).size(12.0).color(TEXT_2));
                 });
                 ui.add_space(12.0);

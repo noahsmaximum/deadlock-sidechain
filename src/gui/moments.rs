@@ -1,7 +1,7 @@
 //! Moments: every game event in one list; pick one to see and shape what it does to the music.
 //! (Replaces the old Signals / Routes / Text rules tabs: everything about one event is in one place.)
 
-use eframe::egui::{self, Color32, CornerRadius, RichText, Sense, Stroke, Ui, pos2, vec2};
+use eframe::egui::{self, CornerRadius, RichText, Sense, Stroke, Ui, pos2, vec2};
 
 use super::App;
 use super::catalog::{self, Group, fmt_amount, phint, pname};
@@ -23,7 +23,7 @@ impl App {
         let h = ui.available_height();
         ui.horizontal_top(|ui| {
             ui.allocate_ui_with_layout(vec2(258.0, h), egui::Layout::top_down(egui::Align::Min), |ui| {
-                egui::Frame::new().fill(SURFACE).stroke(Stroke::new(1.0, BORDER)).corner_radius(CornerRadius::same(12)).inner_margin(egui::Margin::same(8)).show(ui, |ui| {
+                egui::Frame::new().fill(SURFACE).stroke(Stroke::new(1.0, BORDER)).corner_radius(CornerRadius::same(3)).inner_margin(egui::Margin::same(8)).show(ui, |ui| {
                     ui.set_min_height(h - 18.0);
                     egui::ScrollArea::vertical().id_salt("moment_list").auto_shrink([false, false]).show(ui, |ui| self.moment_list(ui, snap));
                 });
@@ -345,9 +345,10 @@ fn list_row(ui: &mut Ui, glyph: &str, name: &str, badge: String, selected: bool,
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
     let p = ui.painter();
     if selected {
-        p.rect_filled(rect, CornerRadius::same(8), SURFACE_2);
+        p.rect_filled(rect, CornerRadius::same(2), SURFACE_2);
+        p.rect_filled(egui::Rect::from_min_size(rect.left_top(), vec2(2.0, rect.height())), CornerRadius::ZERO, ACCENT);
     } else if resp.hovered() {
-        p.rect_filled(rect, CornerRadius::same(8), Color32::from_rgb(28, 30, 37));
+        p.rect_filled(rect, CornerRadius::same(2), SURFACE_2.gamma_multiply(0.7));
     }
     let c = if !enabled { TEXT_3 } else if selected { TEXT } else { TEXT_2 };
     p.text(pos2(rect.left() + 12.0, rect.center().y), egui::Align2::LEFT_CENTER, glyph, egui::FontId::proportional(16.0), if selected && enabled { ACCENT } else { c });

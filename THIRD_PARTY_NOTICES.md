@@ -14,7 +14,9 @@ contain the following third-party work, under their own licenses.
 | Phosphor icons (font) | MIT | [phosphor-icons](https://github.com/phosphor-icons/core) |
 | egui default fonts: Ubuntu-Light, Hack, Noto Emoji, emoji-icon-font | Ubuntu Font Licence 1.0, MIT / Bitstream Vera, OFL-1.1, MIT / OFL-1.1 | [emilk/egui](https://github.com/emilk/egui/tree/master/crates/epaint_default_fonts) |
 
-The Segoe UI font is loaded from Windows at run time and is not distributed.
+The settings window uses Deadlock's own fonts (Radiance, Reaver, VALVE Oracle), read at run time from the
+player's Deadlock install (`game/citadel/panorama/fonts`). They are Valve's and are not distributed with
+Sidechain; without Deadlock, Segoe UI and Georgia are loaded from Windows instead.
 
 ## The hook addon (sidechain-hook.vpk)
 
