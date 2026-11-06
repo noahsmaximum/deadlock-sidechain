@@ -7,6 +7,12 @@
 
 Settings live in `%APPDATA%\Sidechain`. If Spotify ever stays silent after a crash: Windows Settings → System → Sound → Volume mixer → Spotify → output device → Default.
 
+## What's new in 0.2.0
+
+- **Kill streak**: each kill since your last death adds energy (+5% per kill, up to 25%). Dying ends the streak. Adjust it on **Sound → What builds energy**
+- The kill streak shows on **Now** while it's running; the demo match has a double kill to show it
+- Your settings carry over: the streak is on by default with no changes needed
+
 ## What's new in 0.1.0
 
 - First release: one `Sidechain.exe` with the neural stem model, DirectML and the hook addon built in

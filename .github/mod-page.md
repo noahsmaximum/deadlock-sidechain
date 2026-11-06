@@ -7,6 +7,7 @@ underwater, kills hit like a drop.
 - Real-time neural stem separation on your GPU (drums, vocals, music, bass)
 - Energy that builds from moving, fighting, shooting, hits and kills, and brings the stems back in
 - Per-event moves: shot pump, hit muffle, death underwater, kill drop, objectives, ults
+- Kill streaks keep the energy up: every kill until you die raises the floor
 - Settings window with presets, intensity and an effects A/B switch; lives in the tray
 - Client-side only: works in normal matchmaking, no memory reading
 
