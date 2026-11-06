@@ -93,6 +93,12 @@ combat        = { attack_ms = 500, release_ms = 3000 }
 # ---------------------------------------------------------------------------------------------
 # ENERGY = clamp(sum of weight x signal, 0..1). Standing / walking ~0; sprinting ~0.35; dashing 0.5;
 # a fight with shooting and hits pushes it to 1. Negative weights pull it down (dead).
+# A kill streak (kills since you last died) raises the floor: +streak_per_kill per kill, at most
+# streak_max in total. Dying ends the streak.
+[energy]
+streak_per_kill = 0.05
+streak_max      = 0.25
+
 [energy.weights]
 speed         = 0.5
 combat        = 0.3

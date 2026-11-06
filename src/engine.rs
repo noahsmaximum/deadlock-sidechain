@@ -345,6 +345,8 @@ pub fn run(hub: Arc<Hub>, rx: Receiver<Cmd>, cfg: Config, opts: Opts) -> Result<
             s.dead = ctl.dead;
             s.spec = ctl.spec;
             s.kills = ctl.kills;
+            s.streak = ctl.streak;
+            s.streak_boost = if ctl.in_match() { ctl.streak_boost() } else { 0.0 };
             s.live = ctl.in_match();
             s.game_running = game_up;
             s.input = src.to_string();

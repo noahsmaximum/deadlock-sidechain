@@ -38,6 +38,8 @@ pub struct Control {
     pub spec: bool,
     /// Our kill count from our own top-bar slot (hook >= 0.1.3). When known it is the kill source.
     pub kills: Option<f32>,
+    /// Kills since our last death (or the start of the match): raises the energy floor.
+    pub streak: u32,
     /// Our hero's ability names as last reported (only sent while the HUD is really ours).
     pub kit: String,
     pub live: bool,
@@ -81,6 +83,7 @@ impl Control {
             dead: false,
             spec: false,
             kills: None,
+            streak: 0,
             kit: String::new(),
             live: false,
             t_kill: None,
@@ -187,6 +190,7 @@ impl Control {
                     }
                     self.facts.clear();
                     self.kills = None;
+                    self.streak = 0;
                     self.dead = false;
                     self.spec = false;
                 }
@@ -198,6 +202,7 @@ impl Control {
                 if d {
                     self.note("death");
                     self.pulse("death", 1.0);
+                    self.streak = 0;
                 } else {
                     self.note("respawn");
                     self.pulse("respawn", 1.0);
@@ -223,9 +228,7 @@ impl Control {
                 let n = (k - prev).round();
                 if n >= 1.0 && n <= 5.0 {
                     for _ in 0..n as usize {
-                        self.note("kill");
-                        self.t_kill = Some(self.clock);
-                        self.pulse("kill", 1.0);
+                        self.kill("kill");
                     }
                 }
             }
@@ -302,17 +305,30 @@ impl Control {
         self.ammo = None;
     }
 
+    /// One of our kills: the kill moment, and one more on the streak (not for a kill that lands
+    /// after we died: the streak is already over).
+    fn kill(&mut self, what: &str) {
+        if !self.dead {
+            self.streak += 1;
+        }
+        self.note(if self.streak > 1 { format!("{what} (streak {})", self.streak) } else { what.to_string() });
+        self.t_kill = Some(self.clock);
+        self.pulse("kill", 1.0);
+    }
+
+    /// How much the current kill streak raises the energy floor (0..1).
+    pub fn streak_boost(&self) -> f32 {
+        let e = &self.cfg.energy;
+        (self.streak as f32 * e.streak_per_kill).min(e.streak_max).clamp(0.0, 1.0)
+    }
+
     fn event(&mut self, ev: HookEvent) {
         let now = self.clock;
         match ev {
             HookEvent::Simple(name) => match name.as_str() {
                 // with a kill count from our slot (hook >= 0.1.3) that is the only kill source
                 "kill" if self.kills.is_some() => {}
-                "kill" => {
-                    self.note("kill");
-                    self.t_kill = Some(now);
-                    self.pulse("kill", 1.0);
-                }
+                "kill" => self.kill("kill"),
                 "assist" => {
                     self.note("assist");
                     self.t_assist = Some(now);
@@ -370,9 +386,7 @@ impl Control {
             false
         });
         for _ in 0..fire_kill {
-            self.note("kill (streak counter)");
-            self.t_kill = Some(now);
-            self.pulse("kill", 1.0);
+            self.kill("kill (streak counter)");
         }
 
         // continuous levels
@@ -401,7 +415,8 @@ impl Control {
             .iter()
             .filter(|(k, _)| k.as_str() != "energy")
             .map(|(k, w)| w * self.signal(k))
-            .sum();
+            .sum::<f32>()
+            + self.streak_boost();
         let on = self.in_match() || self.holds.contains_key("energy");
         self.level("energy", if on { e.clamp(0.0, 1.0) } else { 0.0 });
         let facts: Vec<(String, f32)> = self.facts.iter().map(|(k, v)| (k.clone(), *v)).collect();
@@ -616,6 +631,35 @@ mod tests {
         feed(&mut c, r#"{"live":0}"#);
         feed(&mut c, r#"{"live":1,"k":0}"#);
         assert_eq!(n(&c, "kill"), 4);
+    }
+
+    /// Each kill since our last death lifts the energy floor, up to the cap; dying ends the streak.
+    #[test]
+    fn kill_streak_raises_energy_floor() {
+        let mut c = Control::new(crate::config::Config::default_config());
+        (c.cfg.energy.streak_per_kill, c.cfg.energy.streak_max) = (0.05, 0.12);
+        c.cfg.energy.weights.clear();
+        feed(&mut c, r#"{"live":1,"dead":0,"spec":0,"k":0}"#);
+        let settle = |c: &mut Control| {
+            for _ in 0..600 {
+                c.tick(0.033);
+            }
+            c.signal("energy")
+        };
+        assert!(settle(&mut c) < 1e-3);
+        feed(&mut c, r#"{"k":1}"#);
+        assert_eq!(c.streak, 1);
+        assert!((settle(&mut c) - 0.05).abs() < 1e-3);
+        feed(&mut c, r#"{"k":3}"#);
+        assert_eq!(c.streak, 3);
+        assert!((settle(&mut c) - 0.12).abs() < 1e-3, "capped at streak_max");
+        // dying ends it; a kill that lands after death doesn't start a new one
+        feed(&mut c, r#"{"dead":1,"k":4}"#);
+        assert_eq!(c.streak, 0);
+        feed(&mut c, r#"{"dead":0}"#);
+        assert!(settle(&mut c) < 1e-3);
+        feed(&mut c, r#"{"k":5}"#);
+        assert_eq!(c.streak, 1);
     }
 
     /// Older hooks (no kill count): impact kills still work.

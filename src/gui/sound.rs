@@ -205,6 +205,25 @@ impl App {
             if let Some(n) = remove {
                 self.draft.energy.weights.remove(&n);
             }
+            ui.add_space(6.0);
+            ui.separator();
+            ui.add_space(4.0);
+            let e = &mut self.draft.energy;
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(icon::FIRE).color(TEXT_2));
+                ui.label("Kill streak");
+                ui.add_space(8.0);
+                ui.label(muted("each kill adds"));
+                ui.spacing_mut().slider_width = 140.0;
+                ui.add(egui::Slider::new(&mut e.streak_per_kill, 0.0..=0.25).custom_formatter(|v, _| format!("+{:.0}%", v * 100.0)).custom_parser(|_| None))
+                    .on_hover_text("Each kill since you last died raises the energy floor by this much. Dying ends the streak.");
+                ui.label(muted("up to"));
+                ui.add(egui::Slider::new(&mut e.streak_max, 0.0..=1.0).custom_formatter(|v, _| format!("{:.0}%", v * 100.0)).custom_parser(|_| None))
+                    .on_hover_text("The most a streak can add, however long it runs.");
+                if snap.streak > 0 {
+                    chip(ui, &format!("{} kills · +{:.0}% now", snap.streak, snap.streak_boost * 100.0), ACCENT);
+                }
+            });
             let missing: Vec<String> = self.signal_names().into_iter().filter(|n| n != "energy" && !self.draft.energy.weights.contains_key(n)).collect();
             if !missing.is_empty() {
                 egui::ComboBox::from_id_salt("add_weight").selected_text(format!("{}  Add a moment", icon::PLUS)).width(200.0).show_ui(ui, |ui| {

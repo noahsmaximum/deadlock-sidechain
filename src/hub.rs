@@ -38,6 +38,9 @@ pub struct Snapshot {
     pub spec: bool,
     /// Our kill count this match, when the hook reports it.
     pub kills: Option<f32>,
+    /// Kills since our last death, and the energy they add.
+    pub streak: u32,
+    pub streak_boost: f32,
     pub live: bool,
     pub game_running: bool,
     pub input: String,
@@ -86,6 +89,8 @@ impl Default for Snapshot {
             dead: false,
             spec: false,
             kills: None,
+            streak: 0,
+            streak_boost: 0.0,
             live: false,
             game_running: false,
             input: "starting".into(),

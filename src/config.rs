@@ -214,11 +214,30 @@ fn default_model() -> String {
 
 /// `energy` = clamp(sum of weight x signal) — how much is going on. Its envelope lives in
 /// [signals.energy]; routes from it take the track from calm to full.
-#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Energy {
     #[serde(default)]
     pub weights: BTreeMap<String, f32>,
+    /// Kill streak: each kill since our last death raises the energy floor by this much…
+    #[serde(default = "default_streak_per_kill")]
+    pub streak_per_kill: f32,
+    /// …up to this much in total. Dying ends the streak.
+    #[serde(default = "default_streak_max")]
+    pub streak_max: f32,
+}
+
+impl Default for Energy {
+    fn default() -> Self {
+        Self { weights: BTreeMap::new(), streak_per_kill: default_streak_per_kill(), streak_max: default_streak_max() }
+    }
+}
+
+fn default_streak_per_kill() -> f32 {
+    0.05
+}
+fn default_streak_max() -> f32 {
+    0.25
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]

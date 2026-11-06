@@ -79,6 +79,9 @@ impl App {
                         .map(|(k, w)| (catalog::title(k), sig(snap, k) * w))
                         .filter(|(_, v)| v.abs() > 0.02)
                         .collect();
+                    if snap.streak_boost > 0.0 {
+                        parts.push((format!("{}-kill streak", snap.streak), snap.streak_boost));
+                    }
                     parts.sort_by(|a, b| b.1.total_cmp(&a.1));
                     ui.horizontal_wrapped(|ui| {
                         ui.label(caption(if parts.is_empty() { "Nothing is building energy right now." } else { "Building it:" }));
@@ -176,6 +179,9 @@ impl App {
                     if let Some(k) = snap.kills {
                         ui.add_space(8.0);
                         chip(ui, &format!("{} {k:.0} kills", icon::SKULL), TEXT_2);
+                    }
+                    if snap.streak > 0 {
+                        chip(ui, &format!("{} streak {} · +{:.0}% energy", icon::FIRE, snap.streak, snap.streak_boost * 100.0), ACCENT);
                     }
                 });
                 ui.end_row();
