@@ -307,7 +307,7 @@ impl Control {
 
     /// One of our kills: the kill moment, and one more on the streak (not for a kill that lands
     /// after we died: the streak is already over).
-    fn kill(&mut self, what: &str) {
+    pub fn kill(&mut self, what: &str) {
         if !self.dead {
             self.streak += 1;
         }

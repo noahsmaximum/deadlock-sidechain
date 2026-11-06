@@ -205,6 +205,16 @@ impl App {
             if let Some(n) = remove {
                 self.draft.energy.weights.remove(&n);
             }
+            let missing: Vec<String> = self.signal_names().into_iter().filter(|n| n != "energy" && !self.draft.energy.weights.contains_key(n)).collect();
+            if !missing.is_empty() {
+                egui::ComboBox::from_id_salt("add_weight").selected_text(format!("{}  Add a moment", icon::PLUS)).width(200.0).show_ui(ui, |ui| {
+                    for n in missing {
+                        if ui.selectable_label(false, format!("{}  {}", catalog::glyph(&n), catalog::title(&n))).clicked() {
+                            self.draft.energy.weights.insert(n, 0.3);
+                        }
+                    }
+                });
+            }
             ui.add_space(6.0);
             ui.separator();
             ui.add_space(4.0);
@@ -224,16 +234,6 @@ impl App {
                     chip(ui, &format!("{} kills · +{:.0}% now", snap.streak, snap.streak_boost * 100.0), ACCENT);
                 }
             });
-            let missing: Vec<String> = self.signal_names().into_iter().filter(|n| n != "energy" && !self.draft.energy.weights.contains_key(n)).collect();
-            if !missing.is_empty() {
-                egui::ComboBox::from_id_salt("add_weight").selected_text(format!("{}  Add a moment", icon::PLUS)).width(200.0).show_ui(ui, |ui| {
-                    for n in missing {
-                        if ui.selectable_label(false, format!("{}  {}", catalog::glyph(&n), catalog::title(&n))).clicked() {
-                            self.draft.energy.weights.insert(n, 0.3);
-                        }
-                    }
-                });
-            }
         });
     }
 

@@ -37,7 +37,7 @@ It works in normal matchmaking: client-side only, with no server plugin and no m
 From a terminal the exe prints as before; double-clicked it has no console window.
 
 To hear everything without the game, use **Try one → Play a 25 s demo match** on the Now page (or run
-`Sidechain.exe --demo`): a scripted 25 s fight with walking, sprinting, shooting, a kill, an ult, a death,
+`Sidechain.exe --demo`): a scripted 25 s fight with walking, sprinting, shooting, a double kill (kill streak), an ult, a death,
 a respawn and an objective.
 
 ## The settings window
